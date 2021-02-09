@@ -18,17 +18,20 @@ parser! {
         Input: Stream<Token = Token>,
         Input::Error: ParseError<char, Input::Range, Input::Position>,
     ] {
-        satisfy(|tok| {
-            match tok {
-                Token::Num(_) => true,
-                _ => false,
-            }
-        }).map(|tok| {
-            match tok {
-                Token::Num(n) => Node::Num(n),
-                _ => unreachable!()
-            }
-        })
+        choice((
+            between(token(Token::LParen), token(Token::RParen), add_expr()),
+            satisfy(|tok| {
+                match tok {
+                    Token::Num(_) => true,
+                    _ => false,
+                }
+            }).map(|tok| {
+                match tok {
+                    Token::Num(n) => Node::Num(n),
+                    _ => unreachable!()
+                }
+            })
+        ))
     }
 }
 
