@@ -7,6 +7,9 @@ pub enum Token {
     Op(String),
     LParen,
     RParen,
+    If,
+    Then,
+    Else,
     Nop,
 }
 
@@ -48,11 +51,26 @@ parser! {
     }
 }
 
+parser! {
+    fn keyword_token[Input]()(Input) -> Token
+    where [
+        Input: Stream<Token = char>,
+        Input::Error: ParseError<char, Input::Range, Input::Position>,
+    ] {
+        choice((
+            string("if").map(|_| Token::If),
+            string("then").map(|_| Token::Then),
+            string("else").map(|_| Token::Else),
+        ))
+    }
+}
+
 pub fn tokenize(s: &str) -> Vec<Token> {
     let mut lexer = many1::<Vec<Token>, _, _>(choice((
         num_token(),
         op_token(),
         symbol_token(),
+        keyword_token(),
         skip_many1(satisfy(|c: char| c.is_whitespace())).map(|_| Token::Nop),
     )));
     let tokens: Vec<Token> = lexer.easy_parse(s).unwrap().0;

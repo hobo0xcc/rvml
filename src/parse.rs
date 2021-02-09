@@ -10,6 +10,11 @@ pub enum Node {
         op: String,
         rhs: Box<Node>,
     },
+    IfExpr {
+        cond: Box<Node>,
+        then_body: Box<Node>,
+        else_body: Box<Node>,
+    },
 }
 
 parser! {
@@ -93,7 +98,43 @@ parser! {
     }
 }
 
+parser! {
+    fn if_expr[Input]()(Input) -> Node
+    where [
+        Input: Stream<Token = Token>,
+        Input::Error: ParseError<char, Input::Range, Input::Position>,
+    ] {
+        (
+            token(Token::If),
+            expr(), // cond
+            token(Token::Then),
+            expr(), // then_body
+            token(Token::Else),
+            expr(), // else_body
+        ).map(|if_expr| {
+            Node::IfExpr {
+                cond: Box::new(if_expr.1),
+                then_body: Box::new(if_expr.3),
+                else_body: Box::new(if_expr.5),
+            }
+        })
+    }
+}
+
+parser! {
+    fn expr[Input]()(Input) -> Node
+    where [
+        Input: Stream<Token = Token>,
+        Input::Error: ParseError<char, Input::Range, Input::Position>,
+    ] {
+        choice((
+            add_expr(),
+            if_expr(),
+        ))
+    }
+}
+
 pub fn parse(tokens: Vec<Token>) -> Node {
-    let mut parser = add_expr();
+    let mut parser = expr();
     parser.parse(&tokens[..]).unwrap().0
 }
