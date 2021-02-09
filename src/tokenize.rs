@@ -10,6 +10,9 @@ pub enum Token {
     If,
     Then,
     Else,
+    Let,
+    In,
+    Ident(String),
     Nop,
 }
 
@@ -34,6 +37,7 @@ parser! {
             token('-').map(|_| Token::Op("-".to_string())),
             token('*').map(|_| Token::Op("*".to_string())),
             token('/').map(|_| Token::Op("/".to_string())),
+            token('=').map(|_| Token::Op("=".to_string())),
         ))
     }
 }
@@ -57,11 +61,14 @@ parser! {
         Input: Stream<Token = char>,
         Input::Error: ParseError<char, Input::Range, Input::Position>,
     ] {
-        choice((
-            string("if").map(|_| Token::If),
-            string("then").map(|_| Token::Then),
-            string("else").map(|_| Token::Else),
-        ))
+        many1::<String, _, _>(satisfy(|c: char| c.is_alphabetic())).map(|s: String| match s.as_str() {
+            "if" => Token::If,
+            "then" => Token::Then,
+            "else" => Token::Else,
+            "let" => Token::Let,
+            "in" => Token::In,
+            _ => Token::Ident(s),
+        })
     }
 }
 

@@ -5,6 +5,7 @@ use rvml::tokenize::*;
 use rvml::eval::*;
 
 fn main() {
-    let output = eval(parse(tokenize("if 1 then 2 * 3 else 3 * 4")));
+    let mut env = EvalEnv::new();
+    let output = eval(parse(tokenize("let a = 20 in let b = 30 in a + b")), &mut env);
     println!("{:?}", output);
 }

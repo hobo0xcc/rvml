@@ -1,10 +1,11 @@
+use super::tokenize::*;
 use combine::error::ParseError;
 use combine::*;
-use super::tokenize::*;
 
 #[derive(Debug, Clone, PartialEq)]
 pub enum Node {
     Num(i32),
+    VarExpr(String),
     Expr {
         lhs: Box<Node>,
         op: String,
@@ -14,6 +15,11 @@ pub enum Node {
         cond: Box<Node>,
         then_body: Box<Node>,
         else_body: Box<Node>,
+    },
+    LetExpr {
+        name: String,
+        first_expr: Box<Node>,
+        second_expr: Box<Node>,
     },
 }
 
@@ -25,6 +31,8 @@ parser! {
     ] {
         choice((
             between(token(Token::LParen), token(Token::RParen), add_expr()),
+            satisfy(|tok| match tok { Token::Ident(_) => true, _ => false })
+                .map(|tok| match tok { Token::Ident(s) => Node::VarExpr(s), _ => unreachable!() }),
             satisfy(|tok| {
                 match tok {
                     Token::Num(_) => true,
@@ -122,6 +130,30 @@ parser! {
 }
 
 parser! {
+    fn let_expr[Input]()(Input) -> Node
+    where [
+        Input: Stream<Token = Token>,
+        Input::Error: ParseError<char, Input::Range, Input::Position>,
+    ] {
+        (
+            token(Token::Let),
+            satisfy(|tok| match tok { Token::Ident(_) => true, _ => false }),
+            token(Token::Op("=".to_string())),
+            expr(),
+            token(Token::In),
+            expr(),
+        ).map(|let_expr| {
+            let name = match let_expr.1 { Token::Ident(s) => s, _ => unreachable!() };
+            Node::LetExpr {
+                name,
+                first_expr: Box::new(let_expr.3),
+                second_expr: Box::new(let_expr.5),
+            }
+        })
+    }
+}
+
+parser! {
     fn expr[Input]()(Input) -> Node
     where [
         Input: Stream<Token = Token>,
@@ -130,6 +162,7 @@ parser! {
         choice((
             add_expr(),
             if_expr(),
+            let_expr(),
         ))
     }
 }
