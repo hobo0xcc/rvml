@@ -1,10 +1,12 @@
 use super::tokenize::*;
+use super::eval::Scope;
 use combine::error::ParseError;
 use combine::*;
+use std::collections::VecDeque;
 
 #[derive(Debug, Clone, PartialEq)]
 pub enum Node {
-    Num(i32),
+    Int(i32),
     VarExpr(String),
     Expr {
         lhs: Box<Node>,
@@ -21,6 +23,21 @@ pub enum Node {
         first_expr: Box<Node>,
         second_expr: Box<Node>,
     },
+    LetRecExpr {
+        name: String,
+        args: Vec<String>,
+        first_expr: Box<Node>,
+        second_expr: Box<Node>,
+    },
+    CurryFunc {
+        body: Box<Node>,
+        env: Scope<Node>,
+        args: Vec<String>,
+    },
+    App {
+        func: Box<Node>,
+        args: Vec<Node>,
+    },
 }
 
 parser! {
@@ -30,7 +47,7 @@ parser! {
         Input::Error: ParseError<char, Input::Range, Input::Position>,
     ] {
         choice((
-            between(token(Token::LParen), token(Token::RParen), add_expr()),
+            between(token(Token::LParen), token(Token::RParen), expr()),
             satisfy(|tok| match tok { Token::Ident(_) => true, _ => false })
                 .map(|tok| match tok { Token::Ident(s) => Node::VarExpr(s), _ => unreachable!() }),
             satisfy(|tok| {
@@ -40,7 +57,7 @@ parser! {
                 }
             }).map(|tok| {
                 match tok {
-                    Token::Num(n) => Node::Num(n),
+                    Token::Num(n) => Node::Int(n),
                     _ => unreachable!()
                 }
             })
@@ -130,6 +147,16 @@ parser! {
 }
 
 parser! {
+    fn ident[Input]()(Input) -> Token
+    where [
+        Input: Stream<Token = Token>,
+        Input::Error: ParseError<char, Input::Range, Input::Position>,
+    ] {
+        satisfy(|tok| match tok { Token::Ident(_) => true, _ => false })
+    }
+}
+
+parser! {
     fn let_expr[Input]()(Input) -> Node
     where [
         Input: Stream<Token = Token>,
@@ -137,7 +164,7 @@ parser! {
     ] {
         (
             token(Token::Let),
-            satisfy(|tok| match tok { Token::Ident(_) => true, _ => false }),
+            ident(),
             token(Token::Op("=".to_string())),
             expr(),
             token(Token::In),
@@ -154,15 +181,99 @@ parser! {
 }
 
 parser! {
+    fn formal_args[Input]()(Input) -> Vec<String>
+    where [
+        Input: Stream<Token = Token>,
+        Input::Error: ParseError<char, Input::Range, Input::Position>,
+    ] {
+        many1::<Vec<String>, _, _>(ident().map(|tok| match tok { Token::Ident(s) => s, _ => unreachable!() }))
+    }
+}
+
+parser! {
+    fn func_def[Input]()(Input) -> (String, Vec<String>, Node)
+    where [
+        Input: Stream<Token = Token>,
+        Input::Error: ParseError<char, Input::Range, Input::Position>,
+    ] {
+        (
+            ident(),
+            formal_args(),
+            token(Token::Op("=".to_string())),
+            expr(),
+        ).map(|t| {
+            let name = match t.0 { Token::Ident(s) => s, _ => unreachable!() };
+            (name, t.1, t.3)
+        })
+    }
+}
+
+parser! {
+    fn letrec_expr[Input]()(Input) -> Node
+    where [
+        Input: Stream<Token = Token>,
+        Input::Error: ParseError<char, Input::Range, Input::Position>,
+    ] {
+        (
+            token(Token::Let),
+            token(Token::Rec),
+            func_def(),
+            token(Token::In),
+            expr(),
+        ).map(|t| {
+            let name = t.2.0;
+            let args = t.2.1;
+            let first_expr = t.2.2;
+            Node::LetRecExpr {
+                name,
+                args,
+                first_expr: Box::new(first_expr),
+                second_expr: Box::new(t.4),
+            }
+        })
+    }
+}
+
+parser! {
+    fn actual_arg[Input]()(Input) -> Vec<Node>
+    where [
+        Input: Stream<Token = Token>,
+        Input::Error: ParseError<char, Input::Range, Input::Position>,
+    ] {
+        many1::<Vec<Node>, _, _>(primary_expr())
+    }
+}
+
+parser! {
+    fn app_expr[Input]()(Input) -> Node
+    where [
+        Input: Stream<Token = Token>,
+        Input::Error: ParseError<char, Input::Range, Input::Position>,
+    ] {
+        (
+            primary_expr(),
+            actual_arg(),
+        ).map(|t| {
+            Node::App {
+                func: Box::new(t.0),
+                args: t.1,
+            }
+        })
+    }
+}
+
+parser! {
     fn expr[Input]()(Input) -> Node
     where [
         Input: Stream<Token = Token>,
         Input::Error: ParseError<char, Input::Range, Input::Position>,
     ] {
         choice((
-            add_expr(),
-            if_expr(),
-            let_expr(),
+            attempt(app_expr()),
+            attempt(add_expr()),
+            attempt(if_expr()),
+            attempt(let_expr()),
+            attempt(letrec_expr()),
         ))
     }
 }

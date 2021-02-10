@@ -12,6 +12,7 @@ pub enum Token {
     Else,
     Let,
     In,
+    Rec,
     Ident(String),
     Nop,
 }
@@ -67,6 +68,7 @@ parser! {
             "else" => Token::Else,
             "let" => Token::Let,
             "in" => Token::In,
+            "rec" => Token::Rec,
             _ => Token::Ident(s),
         })
     }
