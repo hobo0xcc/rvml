@@ -1,8 +1,9 @@
 use super::tokenize::*;
-use super::eval::Scope;
+use super::eval::{Environment, Object};
 use combine::error::ParseError;
 use combine::*;
-use std::collections::VecDeque;
+use std::rc::Rc;
+use std::cell::RefCell;
 
 #[derive(Debug, Clone, PartialEq)]
 pub enum Node {
@@ -31,7 +32,7 @@ pub enum Node {
     },
     CurryFunc {
         body: Box<Node>,
-        env: Scope<Node>,
+        env: Rc<RefCell<Environment<Object>>>,
         args: Vec<String>,
     },
     App {
