@@ -1,9 +1,6 @@
 use super::tokenize::*;
-use super::eval::{Environment, Object};
 use combine::error::ParseError;
 use combine::*;
-use std::rc::Rc;
-use std::cell::RefCell;
 
 #[derive(Debug, Clone, PartialEq)]
 pub enum Node {
@@ -29,11 +26,6 @@ pub enum Node {
         args: Vec<String>,
         first_expr: Box<Node>,
         second_expr: Box<Node>,
-    },
-    CurryFunc {
-        body: Box<Node>,
-        env: Rc<RefCell<Environment<Object>>>,
-        args: Vec<String>,
     },
     App {
         func: Box<Node>,

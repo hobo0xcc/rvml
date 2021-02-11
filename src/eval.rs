@@ -6,7 +6,11 @@ use std::cell::RefCell;
 #[derive(Clone, Debug, PartialEq)]
 pub enum Object {
     Int(i32),
-    Func(Box<Node>),
+    Func {
+        body: Box<Node>,
+        env: Rc<RefCell<Environment<Object>>>,
+        args: Vec<String>,
+    },
 }
 
 #[derive(Debug, Clone, PartialEq)]
@@ -35,6 +39,11 @@ where T: Clone {
     pub fn get(&self, key: &str) -> Option<T> {
         if let Some(item) = self.curr.get(key) {
             return Some(item.clone());
+        } else if let Some(parent) = self.parent.clone() {
+            return match parent.borrow().get(key) {
+                Some(item) => Some(item.clone()),
+                None => None,
+            };
         } else {
             return None;
         }
@@ -47,7 +56,9 @@ where T: Clone {
 
 #[derive(Debug)]
 pub enum EvalError {
-    UndefinedVarAccess,
+    UndefinedVarAccess {
+        name: String,
+    },
 }
 
 pub struct Eval {
@@ -85,7 +96,7 @@ impl Eval {
                 let result = self.get(name.to_string());
                 return match result {
                     Some(obj) => Ok(obj),
-                    None => Err(EvalError::UndefinedVarAccess),
+                    None => Err(EvalError::UndefinedVarAccess { name: name.to_string() }),
                 };
             }
             Node::Expr { lhs, op, rhs } => {
@@ -137,55 +148,38 @@ impl Eval {
             } => {
                 let new_env = Environment::make_child((&self.env).clone());
                 let func_env = Rc::new(RefCell::new(new_env));
-                let curry_func = Node::CurryFunc {
+                let func_obj = Object::Func {
                     body: first_expr.clone(),
                     env: func_env,
                     args: args.clone(),
                 };
-                let result = self.eval(&curry_func)?;
-                self.bind(name.to_string(), result);
+                self.bind(name.to_string(), func_obj);
                 let result = self.eval(&*second_expr)?;
                 Ok(result)
             }
-            Node::CurryFunc {
-                body,
-                env: func_scope,
-                args,
-            } => {
-                if args.len() == 0 {
-                    let mut func_eval = Eval::from(func_scope.clone());
-                    let result = func_eval.eval(&*body)?;
-                    return Ok(result);
-                } else {
-                    let new_node = Node::CurryFunc {
-                        body: body.clone(),
-                        env: func_scope.clone(),
-                        args: args.clone(),
-                    };
-                    return Ok(Object::Func(Box::new(new_node)));
-                }
-            }
             Node::App { func, args } => {
-                let curry_func = match self.eval(&*func)? {
-                    Object::Func(node) => node,
+                let (func_body, func_env, func_args) = match self.eval(&*func)? {
+                    Object::Func { body, env, args } => (body, env, args),
                     _ => unreachable!(),
                 };
-                let (func_body, func_env, func_args) = match *curry_func {
-                    Node::CurryFunc { body, env, args } => (body, env, args),
-                    _ => unreachable!(),
-                };
-                let new_func_env = func_env;
+                let mut new_func_env = Environment::make_child(func_env);
                 let mut cnt: usize = 0;
                 for (name, node) in func_args.iter().zip(args.into_iter()) {
-                    new_func_env.borrow_mut().set(name.to_string(), self.eval(&node)?);
+                    new_func_env.set(name.to_string(), self.eval(&node)?);
                     cnt += 1;
                 }
-                let new_curry_func = Node::CurryFunc {
-                    body: func_body,
-                    env: new_func_env,
-                    args: func_args[cnt..].to_vec(),
-                };
-                self.eval(&new_curry_func)
+                let env_rc = Rc::new(RefCell::new(new_func_env));
+                if cnt >= func_args.len() {
+                    let mut func_eval = Eval::from(env_rc);
+                    let result = func_eval.eval(&*func_body)?;
+                    return Ok(result);
+                } else {
+                    return Ok(Object::Func {
+                        body: func_body,
+                        env: env_rc,
+                        args: func_args[cnt..].to_vec(),
+                    });
+                }
             }
         }
     }
