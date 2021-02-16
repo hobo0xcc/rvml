@@ -5,6 +5,7 @@ use combine::*;
 #[derive(Debug, Clone, PartialEq)]
 pub enum Node {
     Int(i32),
+    Bool(bool),
     VarExpr(String),
     Expr {
         lhs: Box<Node>,
@@ -41,6 +42,8 @@ parser! {
     ] {
         choice((
             between(token(Token::LParen), token(Token::RParen), expr()),
+            token(Token::True).map(|_| Node::Bool(true)),
+            token(Token::False).map(|_| Node::Bool(false)),
             satisfy(|tok| match tok { Token::Ident(_) => true, _ => false })
                 .map(|tok| match tok { Token::Ident(s) => Node::VarExpr(s), _ => unreachable!() }),
             satisfy(|tok| {
@@ -215,7 +218,11 @@ parser! {
             expr(),
         ).map(|t| {
             let name = t.2.0;
-            let args = t.2.1;
+            let args_ = t.2.1;
+            let mut args: Vec<String> = Vec::new();
+            for name in args_.into_iter() {
+                args.push(name);
+            }
             let first_expr = t.2.2;
             Node::LetRecExpr {
                 name,

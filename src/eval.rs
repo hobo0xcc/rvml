@@ -1,11 +1,12 @@
-use super::parse::*;
-use std::collections::HashMap;
+use crate::parse::*;
+use crate::env::Environment;
 use std::rc::Rc;
 use std::cell::RefCell;
 
 #[derive(Clone, Debug, PartialEq)]
 pub enum Object {
     Int(i32),
+    Bool(bool),
     Func {
         body: Box<Node>,
         env: Rc<RefCell<Environment<Object>>>,
@@ -13,51 +14,13 @@ pub enum Object {
     },
 }
 
-#[derive(Debug, Clone, PartialEq)]
-pub struct Environment<T>
-where T: Clone {
-    curr: HashMap<String, T>,
-    parent: Option<Rc<RefCell<Environment<T>>>>,
-}
-
-impl<T> Environment<T>
-where T: Clone {
-    pub fn new() -> Environment<T> {
-        Environment {
-            curr: HashMap::new(),
-            parent: None,
-        }
-    }
-
-    pub fn make_child(parent: Rc<RefCell<Environment<T>>>) -> Environment<T> {
-        Environment {
-            curr: HashMap::new(),
-            parent: Some(parent),
-        }
-    }
-
-    pub fn get(&self, key: &str) -> Option<T> {
-        if let Some(item) = self.curr.get(key) {
-            return Some(item.clone());
-        } else if let Some(parent) = self.parent.clone() {
-            return match parent.borrow().get(key) {
-                Some(item) => Some(item.clone()),
-                None => None,
-            };
-        } else {
-            return None;
-        }
-    }
-
-    pub fn set(&mut self, key: String, item: T) {
-        self.curr.insert(key, item);
-    }
-}
-
 #[derive(Debug)]
 pub enum EvalError {
     UndefinedVarAccess {
         name: String,
+    },
+    TypeUnmatced {
+        expected_type: String,
     },
 }
 
@@ -92,6 +55,9 @@ impl Eval {
             Node::Int(n) => {
                 return Ok(Object::Int(*n));
             }
+            Node::Bool(b) => {
+                return Ok(Object::Bool(*b));
+            }
             Node::VarExpr(name) => {
                 let result = self.get(name.to_string());
                 return match result {
@@ -121,11 +87,13 @@ impl Eval {
                 then_body,
                 else_body,
             } => {
-                let cond_int = match self.eval(&*cond)? {
-                    Object::Int(n) => n,
-                    _ => unreachable!(),
+                let cond_bool = match self.eval(&*cond)? {
+                    Object::Bool(b) => b,
+                    _ => {
+                        return Err(EvalError::TypeUnmatced { expected_type: "bool".to_string() })
+                    },
                 };
-                if cond_int != 0 {
+                if cond_bool {
                     return self.eval(&*then_body);
                 } else {
                     return self.eval(&*else_body);
@@ -137,8 +105,11 @@ impl Eval {
                 second_expr,
             } => {
                 let result = self.eval(&*first_expr)?;
-                self.bind(name.to_string(), result);
-                return Ok(self.eval(&*second_expr)?);
+                let new_env = Environment::make_child((&self.env).clone());
+                let env_rc = Rc::new(RefCell::new(new_env));
+                let mut new_eval = Eval::from(env_rc.clone());
+                new_eval.bind(name.to_string(), result);
+                return Ok(new_eval.eval(&*second_expr)?);
             }
             Node::LetRecExpr {
                 name,
@@ -148,13 +119,14 @@ impl Eval {
             } => {
                 let new_env = Environment::make_child((&self.env).clone());
                 let func_env = Rc::new(RefCell::new(new_env));
+                let mut new_eval = Eval::from(func_env.clone());
                 let func_obj = Object::Func {
                     body: first_expr.clone(),
-                    env: func_env,
+                    env: func_env.clone(),
                     args: args.clone(),
                 };
-                self.bind(name.to_string(), func_obj);
-                let result = self.eval(&*second_expr)?;
+                new_eval.bind(name.to_string(), func_obj);
+                let result = new_eval.eval(&*second_expr)?;
                 Ok(result)
             }
             Node::App { func, args } => {

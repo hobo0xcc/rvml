@@ -13,6 +13,8 @@ pub enum Token {
     Let,
     In,
     Rec,
+    True,
+    False,
     Ident(String),
     Nop,
 }
@@ -69,6 +71,8 @@ parser! {
             "let" => Token::Let,
             "in" => Token::In,
             "rec" => Token::Rec,
+            "true" => Token::True,
+            "false" => Token::False,
             _ => Token::Ident(s),
         })
     }

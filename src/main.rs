@@ -1,10 +1,11 @@
 extern crate combine;
 
-use rvml::parse::*;
 use rvml::tokenize::*;
+use rvml::parse::*;
+use rvml::typing::*;
 use rvml::eval::*;
 
 fn main() {
-    let output = eval(parse(tokenize("let rec square x = x * x in let a = 2 in square (square (square a))")));
-    println!("{:?}", output.unwrap());
+    let output = typing(parse(tokenize("let rec f x = x in if (f true) then f 20 else f 12"))).1;
+    println!("{:?}", output);
 }
