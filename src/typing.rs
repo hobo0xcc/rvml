@@ -52,10 +52,12 @@ impl fmt::Display for Type {
     }
 }
 
+#[derive(Clone, Debug, PartialEq)]
 pub enum TypedNode {
     Int(i32),
     Bool(bool),
     VarExpr(String, Type),
+    Not(Box<TypedNode>),
     Expr {
         lhs: Box<TypedNode>,
         op: String,
@@ -300,16 +302,25 @@ impl Typing {
                     None => Err(TypingError::UndefinedVar),
                 }
             },
+            Node::Not(ref expr) => {
+                let (expr_nd, mut expr_ty) = self.typing(env.clone(), &*expr)?;
+                self.unify(&mut expr_ty, &mut Type::Bool)?;
+                let result_ty = Type::Bool;
+                Ok((TypedNode::Not(
+                    Box::new(expr_nd),
+                ), result_ty))
+            },
             Node::Expr { ref lhs, ref op, ref rhs } => {
                 let mut self_ty = self.new_typevar();
                 let (lhs_nd, mut lhs_ty) = self.typing(env.clone(), &*lhs)?;
                 let (rhs_nd, mut rhs_ty) = self.typing(env.clone(), &*rhs)?;
-                let mut expr_ty = match op.as_str() {
-                    "+" | "-" | "*" | "/" => Type::Int,
+                let (mut operand_ty, mut expr_ty) = match op.as_str() {
+                    "+" | "-" | "*" | "/" => (Type::Int, Type::Int),
+                    "<=" | "=" => (Type::Int, Type::Bool),
                     _ => unreachable!(),
                 };
-                self.unify(&mut lhs_ty, &mut expr_ty)?;
-                self.unify(&mut rhs_ty, &mut expr_ty)?;
+                self.unify(&mut lhs_ty, &mut operand_ty)?;
+                self.unify(&mut rhs_ty, &mut operand_ty)?;
                 self.unify(&mut self_ty, &mut expr_ty)?;
 
                 let result_ty = self_ty;
@@ -436,6 +447,9 @@ impl Typing {
             TypedNode::Bool(_) => {},
             TypedNode::VarExpr(_, ref mut ty) => {
                 *ty = self.deref_ty(ty);
+            },
+            TypedNode::Not(ref mut expr) => {
+                self.deref_node(&mut **expr);
             },
             TypedNode::Expr { ref mut lhs, op: _, ref mut rhs, ref mut ty } => {
                 *ty = self.deref_ty(ty);

@@ -1,5 +1,6 @@
 use crate::parse::*;
 use crate::env::Environment;
+use crate::typing::*;
 use std::rc::Rc;
 use std::cell::RefCell;
 
@@ -8,9 +9,9 @@ pub enum Object {
     Int(i32),
     Bool(bool),
     Func {
-        body: Box<Node>,
+        body: Box<TypedNode>,
         env: Rc<RefCell<Environment<Object>>>,
-        args: Vec<String>,
+        args: Vec<(String, Type)>,
     },
 }
 
@@ -50,42 +51,70 @@ impl Eval {
         self.env.borrow_mut().set(key, item);
     }
 
-    pub fn eval(&mut self, node: &Node) -> Result<Object, EvalError> {
-        match node {
-            Node::Int(n) => {
+    pub fn eval(&mut self, node: &TypedNode) -> Result<Object, EvalError> {
+        match *node {
+            TypedNode::Int(ref n) => {
                 return Ok(Object::Int(*n));
             }
-            Node::Bool(b) => {
+            TypedNode::Bool(ref b) => {
                 return Ok(Object::Bool(*b));
             }
-            Node::VarExpr(name) => {
+            TypedNode::VarExpr(ref name, ref ty) => {
                 let result = self.get(name.to_string());
                 return match result {
                     Some(obj) => Ok(obj),
                     None => Err(EvalError::UndefinedVarAccess { name: name.to_string() }),
                 };
             }
-            Node::Expr { lhs, op, rhs } => {
-                let lval = match self.eval(&*lhs)? {
-                    Object::Int(n) => n,
+            TypedNode::Not(ref expr) => {
+                let b = self.eval(&*expr)?;
+                return match b {
+                    Object::Bool(b) => Ok(Object::Bool(!b)),
                     _ => unreachable!(),
                 };
-                let rval = match self.eval(&*rhs)? {
-                    Object::Int(n) => n,
-                    _ => unreachable!(),
-                };
-                Ok(Object::Int(match op.as_str() {
-                    "+" => lval + rval,
-                    "-" => lval - rval,
-                    "*" => lval * rval,
-                    "/" => lval * rval,
-                    _ => unreachable!(),
-                }))
             }
-            Node::IfExpr {
-                cond,
-                then_body,
-                else_body,
+            TypedNode::Expr { ref lhs, ref op, ref rhs, ref ty } => {
+                match *ty {
+                    Type::Int => {
+                        let lval = match self.eval(&*lhs)? {
+                            Object::Int(n) => n,
+                            _ => unreachable!(),
+                        };
+                        let rval = match self.eval(&*rhs)? {
+                            Object::Int(n) => n,
+                            _ => unreachable!(),
+                        };
+                        Ok(Object::Int(match op.as_str() {
+                            "+" => lval + rval,
+                            "-" => lval - rval,
+                            "*" => lval * rval,
+                            "/" => lval * rval,
+                            _ => unreachable!(),
+                        }))
+                    },
+                    Type::Bool => {
+                        let lval = match self.eval(&*lhs)? {
+                            Object::Int(n) => n,
+                            _ => unreachable!(),
+                        };
+                        let rval = match self.eval(&*rhs)? {
+                            Object::Int(n) => n,
+                            _ => unreachable!(),
+                        };
+                        Ok(Object::Bool(match op.as_str() {
+                            "<=" => lval <= rval,
+                            "=" => lval == rval,
+                            _ => unreachable!(),
+                        }))
+                    },
+                    _ => unreachable!(),
+                }
+            }
+            TypedNode::IfExpr {
+                ref cond,
+                ref then_body,
+                ref else_body,
+                ref ty,
             } => {
                 let cond_bool = match self.eval(&*cond)? {
                     Object::Bool(b) => b,
@@ -99,10 +128,11 @@ impl Eval {
                     return self.eval(&*else_body);
                 }
             }
-            Node::LetExpr {
-                name,
-                first_expr,
-                second_expr,
+            TypedNode::LetExpr {
+                ref name,
+                ref first_expr,
+                ref second_expr,
+                ref ty,
             } => {
                 let result = self.eval(&*first_expr)?;
                 let new_env = Environment::make_child((&self.env).clone());
@@ -111,11 +141,12 @@ impl Eval {
                 new_eval.bind(name.to_string(), result);
                 return Ok(new_eval.eval(&*second_expr)?);
             }
-            Node::LetRecExpr {
-                name,
-                args,
-                first_expr,
-                second_expr,
+            TypedNode::LetRecExpr {
+                ref name,
+                ref args,
+                ref first_expr,
+                ref second_expr,
+                ref ty,
             } => {
                 let new_env = Environment::make_child((&self.env).clone());
                 let func_env = Rc::new(RefCell::new(new_env));
@@ -129,14 +160,14 @@ impl Eval {
                 let result = new_eval.eval(&*second_expr)?;
                 Ok(result)
             }
-            Node::App { func, args } => {
+            TypedNode::App { ref func, ref args, ref ty } => {
                 let (func_body, func_env, func_args) = match self.eval(&*func)? {
                     Object::Func { body, env, args } => (body, env, args),
                     _ => unreachable!(),
                 };
                 let mut new_func_env = Environment::make_child(func_env);
                 let mut cnt: usize = 0;
-                for (name, node) in func_args.iter().zip(args.into_iter()) {
+                for ((name, ty), node) in func_args.iter().zip(args.into_iter()) {
                     new_func_env.set(name.to_string(), self.eval(&node)?);
                     cnt += 1;
                 }
@@ -157,7 +188,7 @@ impl Eval {
     }
 }
 
-pub fn eval(node: Node) -> Result<Object, EvalError> {
+pub fn eval(node: TypedNode) -> Result<Object, EvalError> {
     let mut e = Eval::new();
     e.eval(&node)
 }

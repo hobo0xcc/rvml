@@ -16,8 +16,8 @@ fn repl() -> io::Result<()> {
         if source.len() == 0 {
             break;
         }
-        let output = typing(parse(tokenize(source.trim()))).1;
-        println!("{}", output);
+        let output = eval(typing(parse(tokenize(source.trim()))).0);
+        println!("{:?}", output.unwrap());
     }
 
     Ok(())

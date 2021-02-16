@@ -1,5 +1,7 @@
 use combine::parser::char::*;
 use combine::*;
+use combine::stream::position;
+use std::process;
 
 #[derive(Debug, Clone, PartialEq)]
 pub enum Token {
@@ -15,6 +17,7 @@ pub enum Token {
     Rec,
     True,
     False,
+    Not,
     Ident(String),
     Nop,
 }
@@ -36,11 +39,16 @@ parser! {
         Input::Error: ParseError<char, Input::Range, Input::Position>,
     ] {
         choice((
+            attempt((token('<'), token('='))).map(|_| Token::Op("<=".to_string())),
+            attempt((token('>'), token('='))).map(|_| Token::Op(">=".to_string())),
+            attempt((token('<'), token('>'))).map(|_| Token::Op("<>".to_string())),
             token('+').map(|_| Token::Op("+".to_string())),
             token('-').map(|_| Token::Op("-".to_string())),
             token('*').map(|_| Token::Op("*".to_string())),
             token('/').map(|_| Token::Op("/".to_string())),
             token('=').map(|_| Token::Op("=".to_string())),
+            token('<').map(|_| Token::Op("<".to_string())),
+            token('>').map(|_| Token::Op(">".to_string())),
         ))
     }
 }
@@ -73,6 +81,7 @@ parser! {
             "rec" => Token::Rec,
             "true" => Token::True,
             "false" => Token::False,
+            "not" => Token::Not,
             _ => Token::Ident(s),
         })
     }
@@ -86,7 +95,14 @@ pub fn tokenize(s: &str) -> Vec<Token> {
         keyword_token(),
         skip_many1(satisfy(|c: char| c.is_whitespace())).map(|_| Token::Nop),
     )));
-    let tokens: Vec<Token> = lexer.easy_parse(s).unwrap().0;
+    let res = lexer.easy_parse(position::Stream::new(s));
+    let tokens: Vec<Token> = match res {
+        Ok(t) => t.0,
+        Err(e) => {
+            println!("{}", e);
+            process::exit(1);
+        }
+    };
     tokens
         .into_iter()
         .filter_map(|tok: Token| match tok {

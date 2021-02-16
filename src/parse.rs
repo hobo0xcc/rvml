@@ -7,6 +7,7 @@ pub enum Node {
     Int(i32),
     Bool(bool),
     VarExpr(String),
+    Not(Box<Node>),
     Expr {
         lhs: Box<Node>,
         op: String,
@@ -62,14 +63,34 @@ parser! {
 }
 
 parser! {
+    fn unary_expr[Input]()(Input) -> Node
+    where [
+        Input: Stream<Token = Token>,
+        Input::Error: ParseError<char, Input::Range, Input::Position>,
+    ] {
+        choice((
+            primary_expr(),
+            (
+                token(Token::Not),
+                unary_expr(),
+            ).map(|t| Node::Not(Box::new(t.1))),
+        ))
+    }
+}
+
+parser! {
     fn mul_expr[Input]()(Input) -> Node
     where [
         Input: Stream<Token = Token>,
         Input::Error: ParseError<char, Input::Range, Input::Position>,
     ] {
         (
-            primary_expr(),
-            optional(many1::<Vec<(Token, Node)>, _, _>((choice((token(Token::Op("*".to_string())), token(Token::Op("/".to_string())))), primary_expr())))
+            unary_expr(),
+            optional(many1::<Vec<(Token, Node)>, _, _>((
+                choice((
+                    token(Token::Op("*".to_string())), token(Token::Op("/".to_string()))
+                )), unary_expr()
+            )))
         ).map(|expr| {
             let mut left = expr.0;
             if let Some(x) = expr.1 {
@@ -98,7 +119,103 @@ parser! {
     ] {
         (
             mul_expr(),
-            optional(many1::<Vec<(Token, Node)>, _, _>((choice((token(Token::Op("+".to_string())), token(Token::Op("-".to_string())))), mul_expr())))
+            optional(many1::<Vec<(Token, Node)>, _, _>((
+                choice((
+                    token(Token::Op("+".to_string())), token(Token::Op("-".to_string()))
+                )), mul_expr()
+            )))
+        ).map(|expr| {
+            let mut left = expr.0;
+            if let Some(x) = expr.1 {
+                for (op_tok, node) in x.into_iter() {
+                    let op = match op_tok {
+                        Token::Op(s) => s,
+                        _ => unreachable!()
+                    };
+                    left = Node::Expr {
+                        lhs: Box::new(left),
+                        op,
+                        rhs: Box::new(node),
+                    };
+                }
+            }
+            return left;
+        })
+    }
+}
+
+parser! {
+    fn relational_expr[Input]()(Input) -> Node
+    where [
+        Input: Stream<Token = Token>,
+        Input::Error: ParseError<char, Input::Range, Input::Position>,
+    ] {
+        (
+            add_expr(),
+            optional(many1::<Vec<(Token, Node)>, _, _>((
+                choice((
+                    token(Token::Op("<".to_string())), token(Token::Op("<=".to_string())),
+                    token(Token::Op(">".to_string())), token(Token::Op(">=".to_string())),
+                )), add_expr()
+            )))
+        ).map(|expr| {
+            let mut left = expr.0;
+            if let Some(x) = expr.1 {
+                for (op_tok, node) in x.into_iter() {
+                    let op = match op_tok {
+                        Token::Op(s) => s,
+                        _ => unreachable!()
+                    };
+                    match op.as_str() {
+                        "<" => {
+                            left = Node::Not(Box::new(Node::Expr {
+                                lhs: Box::new(node),
+                                op: String::from("<="),
+                                rhs: Box::new(left),
+                            }));
+                        },
+                        ">" => {
+                            left = Node::Not(Box::new(Node::Expr {
+                                lhs: Box::new(left),
+                                op: String::from("<="),
+                                rhs: Box::new(node),
+                            }));
+                        },
+                        "<=" => {
+                            left = Node::Expr {
+                                lhs: Box::new(left),
+                                op: String::from("<="),
+                                rhs: Box::new(node),
+                            };
+                        },
+                        ">=" => {
+                            left = Node::Expr {
+                                lhs: Box::new(node),
+                                op: String::from("<="),
+                                rhs: Box::new(left),
+                            };
+                        },
+                        _ => unreachable!(),
+                    }
+                }
+            }
+            return left;
+        })
+    }
+}
+
+parser! {
+    fn equal_expr[Input]()(Input) -> Node
+    where [
+        Input: Stream<Token = Token>,
+        Input::Error: ParseError<char, Input::Range, Input::Position>,
+    ] {
+        (
+            relational_expr(),
+            optional(many1::<Vec<(Token, Node)>, _, _>((
+                token(Token::Op("=".to_string())),
+                relational_expr()
+            )))
         ).map(|expr| {
             let mut left = expr.0;
             if let Some(x) = expr.1 {
@@ -270,7 +387,7 @@ parser! {
     ] {
         choice((
             attempt(app_expr()),
-            attempt(add_expr()),
+            attempt(equal_expr()),
             attempt(if_expr()),
             attempt(let_expr()),
             attempt(letrec_expr()),
