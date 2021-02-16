@@ -4,6 +4,7 @@ use std::{cmp::min, rc::Rc};
 use std::cell::{RefCell, Cell};
 use std::collections::HashMap;
 use std::process;
+use std::fmt;
 
 #[derive(Debug, Copy, Clone, PartialEq)]
 pub enum TypeVar {
@@ -21,6 +22,34 @@ pub enum Type {
     },
     TVar(Rc<Cell<TypeVar>>), // Type variable
     QVar(usize), // Quantified type variable
+}
+
+impl fmt::Display for Type {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        match *self {
+            Type::Int => write!(f, "int"),
+            Type::Bool => write!(f, "bool"),
+            Type::Func { ref args, ref ret } => {
+                for a in args.iter() {
+                    write!(f, "{} -> ", a)?;
+                }
+                write!(f, "{}", **ret)
+            },
+            Type::TVar(ref tv) => {
+                match tv.get() {
+                    TypeVar::Unbound(id, level) => {
+                        write!(f, "t{}/{}", id, level)
+                    },
+                    TypeVar::Link(id) => {
+                        write!(f, "t{}", id)
+                    }
+                }
+            },
+            Type::QVar(ref id) => {
+                write!(f, "'t{}", id)
+            }
+        }
+    }
 }
 
 pub enum TypedNode {
