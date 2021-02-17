@@ -3,3 +3,4 @@ pub mod parse;
 pub mod typing;
 pub mod eval;
 pub mod env;
+pub mod test;

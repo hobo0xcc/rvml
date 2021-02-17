@@ -13,9 +13,6 @@ fn repl() -> io::Result<()> {
         print!(">> ");
         io::stdout().flush()?;
         io::stdin().read_line(&mut source)?;
-        if source.len() == 0 {
-            break;
-        }
         let output = eval(typing(parse(tokenize(source.trim()))).0);
         println!("{:?}", output.unwrap());
     }
