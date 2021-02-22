@@ -2,7 +2,7 @@
 
 `rvml` is a min-caml compiler that implements let-polymorphism.
 rvml's polymorphic type inference is implemented in level-based algorithm discovered by Didier Rémy.
-Code generation can generate codes with polymorphic types.
+Code generator can generate codes with polymorphic types.
 
 ## Require
 
