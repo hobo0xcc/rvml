@@ -47,6 +47,32 @@ $ ./main
 $ echo $?    # This should put 42.
 ```
 
+## Examples
+
+### let polymorphism
+
+```ocaml
+let rec f x = x in if f (f true) then f 42 else f 2
+```
+
+### fibonacci number
+
+```ocaml
+let rec fib n = if n < 2 then 1 else (fib (n - 1)) + (fib (n - 2)) in fib 10
+```
+
+### factorial
+
+```ocaml
+let rec fact n = if n = 0 then 1 else n * (fact (n - 1)) in fact 5
+```
+
+### tuple
+
+```ocaml
+let rec f x = (x, x, x) in let (a, b, c) = f 3 in a + b + c
+```
+
 ## Todo
 
 - [ ] Support nested function
