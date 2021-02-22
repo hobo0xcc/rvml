@@ -1,7 +1,7 @@
 use crate::parse::Node;
-use crate::env::{Environment, DeBruijn};
-use std::{cmp::min, rc::Rc};
-use std::cell::{RefCell, Cell};
+use crate::env::DeBruijn;
+use std::{cmp::min, rc::Rc, unreachable};
+use std::cell::Cell;
 use std::collections::HashMap;
 use std::process;
 use std::fmt;
@@ -16,6 +16,7 @@ pub enum TypeVar {
 pub enum Type {
     Int,
     Bool,
+    Tuple(Vec<Type>),
     Func {
         args: Vec<Type>,
         ret: Box<Type>,
@@ -29,6 +30,17 @@ impl fmt::Display for Type {
         match *self {
             Type::Int => write!(f, "int"),
             Type::Bool => write!(f, "bool"),
+            Type::Tuple(ref t) => {
+                for (i, ty) in t.iter().enumerate() {
+                    if i == t.len() - 1 {
+                        write!(f, "{}", ty)?;
+                    } else {
+                        write!(f, "{} * ", ty)?;
+                    }
+                }
+
+                Ok(())
+            },
             Type::Func { ref args, ref ret } => {
                 for a in args.iter() {
                     write!(f, "{} -> ", a)?;
@@ -58,6 +70,7 @@ pub enum TypedNode {
     Bool(bool),
     VarExpr(String, Type),
     Not(Box<TypedNode>),
+    Tuple(Vec<TypedNode>, Type),
     Expr {
         lhs: Box<TypedNode>,
         op: String,
@@ -76,16 +89,25 @@ pub enum TypedNode {
         second_expr: Box<TypedNode>,
         ty: Type,
     },
+    LetTupleExpr {
+        names: Vec<(String, Type)>,
+        first_expr: Box<TypedNode>,
+        second_expr: Box<TypedNode>,
+        tuple_ty: Type,
+        ty: Type,
+    },
     LetRecExpr {
         name: String,
         args: Vec<(String, Type)>,
         first_expr: Box<TypedNode>,
         second_expr: Box<TypedNode>,
+        func_ty: Type,
         ty: Type,
     },
     App {
         func: Box<TypedNode>,
         args: Vec<TypedNode>,
+        func_ty: Type,
         ty: Type,
     },
 }
@@ -99,6 +121,7 @@ pub enum TypingError {
     UndefinedVar,
     UnknownOp,
     TypeUnmatched,
+    SizeUnmatched,
     OccursInside,
 }
 
@@ -141,18 +164,6 @@ impl Typing {
 
     pub fn leave_level(&mut self) {
         self.curr_level -= 1;
-    }
-
-    pub fn get_vartype(&self, env: Rc<RefCell<Environment<Type>>>, name: &str) -> Option<Type> {
-        return (*env).borrow().get(name);
-    }
-
-    pub fn put_vartype(&self, env: Rc<RefCell<Environment<Type>>>, name: String, ty: Type) {
-        (*env).borrow_mut().set(name, ty);
-    }
-
-    pub fn create_env(&self, env: Rc<RefCell<Environment<Type>>>) -> Rc<RefCell<Environment<Type>>> {
-        return Rc::new(RefCell::new(Environment::make_child(env)));
     }
 
     pub fn occurs_check(&self, tvr1: &TypeVar, ty1: &mut Type) -> bool {
@@ -200,7 +211,6 @@ impl Typing {
                             return Err(TypingError::OccursInside);
                         }
                         tv.set(self.link_typevar(*id, t_.clone()));
-                        // tv.replace(TypeVar::Link(Box::new(t_.clone())));
                     },
                     TypeVar::Link(ref mut id) => {
                         let mut linked_ty = self.get_typevar_link(*id).unwrap();
@@ -209,10 +219,21 @@ impl Typing {
                 }
             },
             (Type::Func { args: ref mut args1, ret: ref mut ret1 }, Type::Func { args: ref mut args2, ret: ref mut ret2 }) => {
+                if args1.len() != args2.len() {
+                    return Err(TypingError::SizeUnmatched);
+                }
                 for (a1, a2) in args1.iter_mut().zip(args2.iter_mut()) {
                     self.unify(a1, a2)?;
                 }
                 self.unify(&mut *ret1, &mut *ret2)?;
+            },
+            (Type::Tuple(ref mut tys1), Type::Tuple(ref mut tys2)) => {
+                if tys1.len() != tys2.len() {
+                    return Err(TypingError::SizeUnmatched);
+                }
+                for (ty1, ty2) in tys1.iter_mut().zip(tys2.iter_mut()) {
+                    self.unify(ty1, ty2)?;
+                }
             },
             _ => return Err(TypingError::TypeUnmatched),
         }
@@ -281,6 +302,17 @@ impl Typing {
                     ret: Box::new(new_ret),
                 }, subst_fn)
             },
+            Type::Tuple(ref tys) => {
+                let mut subst_tup = subst.clone();
+                let mut new_tys = Vec::new();
+                for ty in tys.iter() {
+                    let (new_ty, new_subst) = self.instantiate_loop(subst_tup, ty);
+                    new_tys.push(new_ty);
+                    subst_tup = new_subst;
+                }
+
+                (Type::Tuple(new_tys), subst_tup)
+            }
             _ => (ty.clone(), subst)
         }
     }
@@ -309,6 +341,21 @@ impl Typing {
                 Ok((TypedNode::Not(
                     Box::new(expr_nd),
                 ), result_ty))
+            },
+            Node::Tuple(ref exprs) => {
+                let mut typed_exprs = Vec::new();
+                let mut types = Vec::new();
+                for expr in exprs.iter() {
+                    let (typed_expr, ty) = self.typing(env.clone(), expr)?;
+                    typed_exprs.push(typed_expr);
+                    types.push(ty);
+                }
+
+                let result_ty  = Type::Tuple(types);
+                Ok((
+                    TypedNode::Tuple(typed_exprs, result_ty.clone()),
+                    result_ty,
+                ))
             },
             Node::Expr { ref lhs, ref op, ref rhs } => {
                 let mut self_ty = self.new_typevar();
@@ -368,6 +415,37 @@ impl Typing {
                     ty: result_ty.clone(),
                 }, result_ty))
             },
+            Node::LetTupleExpr { ref names, ref first_expr, ref second_expr } => {
+                self.enter_level();
+                let (first_nd, mut first_ty) = self.typing(env.clone(), &*first_expr)?;
+                self.leave_level();
+
+                let mut tuple_tys = Vec::new();
+                for _ in names.iter() {
+                    tuple_tys.push(self.new_typevar());
+                }
+                let mut tuple_ty = Type::Tuple(tuple_tys.clone());
+
+                self.unify(&mut first_ty, &mut tuple_ty)?;
+
+                let mut new_env = env.clone();
+                let mut name_tys = Vec::new();
+                for (name, ty) in names.iter().zip(tuple_tys.iter()) {
+                    new_env = new_env.add((name.to_string(), ty.clone()));
+                    name_tys.push((name.to_string(), ty.clone()));
+                }
+                let (second_nd, second_ty) = self.typing(new_env, &*second_expr)?;
+
+                let result_ty = second_ty;
+
+                Ok((TypedNode::LetTupleExpr {
+                    names: name_tys,
+                    first_expr: Box::new(first_nd),
+                    second_expr: Box::new(second_nd),
+                    tuple_ty,
+                    ty: result_ty.clone(),
+                }, result_ty))
+            },
             Node::LetRecExpr { ref name, ref args, ref first_expr, ref second_expr } => {
                 self.enter_level();
                 let mut fun_tv = self.new_typevar();
@@ -393,6 +471,7 @@ impl Typing {
                     args: args.into_iter().map(|s| s.to_string()).zip(arg_tvs.into_iter()).collect(),
                     first_expr: Box::new(first_nd),
                     second_expr: Box::new(second_nd),
+                    func_ty: fun_tv,
                     ty: result_ty.clone(),
                 }, result_ty))
             },
@@ -413,6 +492,7 @@ impl Typing {
                 Ok((TypedNode::App {
                     func: Box::new(fun_nd),
                     args: arg_nds,
+                    func_ty: fun_ty,
                     ty: result_ty.clone(),
                 }, result_ty))
             }
@@ -423,6 +503,15 @@ impl Typing {
         match *ty {
             Type::Int => Type::Int,
             Type::Bool => Type::Bool,
+            Type::Tuple(ref tys) => {
+                let mut new_tys = Vec::new();
+                for ty in tys.iter() {
+                    let new_ty = self.deref_ty(ty);
+                    new_tys.push(new_ty);
+                }
+
+                Type::Tuple(new_tys)
+            },
             Type::Func { ref args, ref ret } => {
                 Type::Func {
                     args: args.iter().map(|a| self.deref_ty(a)).collect(),
@@ -451,6 +540,12 @@ impl Typing {
             TypedNode::Not(ref mut expr) => {
                 self.deref_node(&mut **expr);
             },
+            TypedNode::Tuple(ref mut tynds, ref mut ty) => {
+                *ty = self.deref_ty(ty);
+                for tynd in tynds.iter_mut() {
+                    self.deref_node(tynd);
+                }
+            },
             TypedNode::Expr { ref mut lhs, op: _, ref mut rhs, ref mut ty } => {
                 *ty = self.deref_ty(ty);
                 self.deref_node(&mut **lhs);
@@ -467,16 +562,27 @@ impl Typing {
                 self.deref_node(&mut **first_expr);
                 self.deref_node(&mut **second_expr);
             },
-            TypedNode::LetRecExpr { name: _, ref mut args, ref mut first_expr, ref mut second_expr, ref mut ty } => {
+            TypedNode::LetTupleExpr { ref mut names, ref mut first_expr, ref mut second_expr, ref mut tuple_ty, ref mut ty } => {
                 *ty = self.deref_ty(ty);
+                *tuple_ty = self.deref_ty(tuple_ty);
+                for (_name, ty) in names.iter_mut() {
+                    *ty = self.deref_ty(ty);
+                }
+                self.deref_node(&mut **first_expr);
+                self.deref_node(&mut **second_expr);
+            },
+            TypedNode::LetRecExpr { name: _, ref mut args, ref mut first_expr, ref mut second_expr, ref mut func_ty, ref mut ty } => {
+                *ty = self.deref_ty(ty);
+                *func_ty = self.deref_ty(func_ty);
                 for (_name, a) in args.iter_mut() {
                     *a = self.deref_ty(a);
                 }
                 self.deref_node(&mut **first_expr);
                 self.deref_node(&mut **second_expr);
             },
-            TypedNode::App { ref mut func, ref mut args, ref mut ty } => {
+            TypedNode::App { ref mut func, ref mut args, ref mut func_ty, ref mut ty } => {
                 *ty = self.deref_ty(ty);
+                *func_ty = self.deref_ty(func_ty);
                 self.deref_node(&mut **func);
                 for a in args.iter_mut() {
                     self.deref_node(a);

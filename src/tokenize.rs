@@ -1,7 +1,7 @@
 use combine::parser::char::*;
 use combine::*;
 use combine::stream::position;
-use std::process;
+use std::{process, unimplemented};
 
 #[derive(Debug, Clone, PartialEq)]
 pub enum Token {
@@ -9,6 +9,7 @@ pub enum Token {
     Op(String),
     LParen,
     RParen,
+    Comma,
     If,
     Then,
     Else,
@@ -20,6 +21,20 @@ pub enum Token {
     Not,
     Ident(String),
     Nop,
+}
+
+impl Token {
+    pub fn get_string(&self) -> String {
+        match *self {
+            Token::Ident(ref s) => {
+                s.to_string()
+            },
+            Token::Op(ref s) => {
+                s.to_string()
+            },
+            _ => unimplemented!(),
+        }
+    }
 }
 
 parser! {
@@ -62,6 +77,7 @@ parser! {
         choice((
             token('(').map(|_| Token::LParen),
             token(')').map(|_| Token::RParen),
+            token(',').map(|_| Token::Comma),
         ))
     }
 }
@@ -72,7 +88,7 @@ parser! {
         Input: Stream<Token = char>,
         Input::Error: ParseError<char, Input::Range, Input::Position>,
     ] {
-        many1::<String, _, _>(satisfy(|c: char| c.is_alphabetic())).map(|s: String| match s.as_str() {
+        many1::<String, _, _>(satisfy(|c: char| c.is_alphabetic() || c == '_')).map(|s: String| match s.as_str() {
             "if" => Token::If,
             "then" => Token::Then,
             "else" => Token::Else,

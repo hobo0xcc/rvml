@@ -8,6 +8,7 @@ pub enum Node {
     Bool(bool),
     VarExpr(String),
     Not(Box<Node>),
+    Tuple(Vec<Node>),
     Expr {
         lhs: Box<Node>,
         op: String,
@@ -20,6 +21,11 @@ pub enum Node {
     },
     LetExpr {
         name: String,
+        first_expr: Box<Node>,
+        second_expr: Box<Node>,
+    },
+    LetTupleExpr {
+        names: Vec<String>,
         first_expr: Box<Node>,
         second_expr: Box<Node>,
     },
@@ -213,7 +219,10 @@ parser! {
         (
             relational_expr(),
             optional(many1::<Vec<(Token, Node)>, _, _>((
-                token(Token::Op("=".to_string())),
+                choice((
+                    token(Token::Op("<>".to_string())),
+                    token(Token::Op("=".to_string()))
+                )),
                 relational_expr()
             )))
         ).map(|expr| {
@@ -224,10 +233,22 @@ parser! {
                         Token::Op(s) => s,
                         _ => unreachable!()
                     };
-                    left = Node::Expr {
-                        lhs: Box::new(left),
-                        op,
-                        rhs: Box::new(node),
+                    match op.as_str() {
+                        "=" => {
+                            left = Node::Expr {
+                                lhs: Box::new(left),
+                                op: "=".to_string(),
+                                rhs: Box::new(node),
+                            };
+                        },
+                        "<>" => {
+                            left = Node::Not(Box::new(Node::Expr {
+                                lhs: Box::new(left),
+                                op: "=".to_string(),
+                                rhs: Box::new(node),
+                            }));
+                        },
+                        _ => unreachable!(),
                     };
                 }
             }
@@ -286,6 +307,54 @@ parser! {
             let name = match let_expr.1 { Token::Ident(s) => s, _ => unreachable!() };
             Node::LetExpr {
                 name,
+                first_expr: Box::new(let_expr.3),
+                second_expr: Box::new(let_expr.5),
+            }
+        })
+    }
+}
+
+parser! {
+    fn tuple_ids[Input]()(Input) -> Vec<String>
+    where [
+        Input: Stream<Token = Token>,
+        Input::Error: ParseError<char, Input::Range, Input::Position>,
+    ] {
+        (
+            ident(),
+            token(Token::Comma)
+            .with(ident()),
+            optional(many1::<Vec<Token>, _, _>(token(Token::Comma).with(ident()))),
+        ).map(|(id1, id2, ids)| {
+            let mut id_vec = Vec::new();
+            id_vec.push(id1.get_string());
+            id_vec.push(id2.get_string());
+            if let Some(ids) = ids {
+                id_vec.extend(ids.into_iter().map(|t| t.get_string()));
+            }
+
+            id_vec
+        })
+    }
+}
+
+parser! {
+    fn lettuple_expr[Input]()(Input) -> Node
+    where [
+        Input: Stream<Token = Token>,
+        Input::Error: ParseError<char, Input::Range, Input::Position>,
+    ] {
+        (
+            token(Token::Let),
+            between(token(Token::LParen), token(Token::RParen), tuple_ids()),
+            token(Token::Op("=".to_string())),
+            expr(),
+            token(Token::In),
+            expr(),
+        ).map(|let_expr| {
+            let names = let_expr.1;
+            Node::LetTupleExpr {
+                names,
                 first_expr: Box::new(let_expr.3),
                 second_expr: Box::new(let_expr.5),
             }
@@ -380,6 +449,31 @@ parser! {
 }
 
 parser! {
+    fn tuple_expr[Input]()(Input) -> Node
+    where [
+        Input: Stream<Token = Token>,
+        Input::Error: ParseError<char, Input::Range, Input::Position>,
+    ] {
+        (
+            token(Token::LParen),
+            expr(),
+            token(Token::Comma),
+            expr(),
+            optional(many1::<Vec<Node>, _, _>((token(Token::Comma), expr()).map(|t| t.1))),
+            token(Token::RParen),
+        ).map(|(_, e1, _, e2, es, _)| {
+            let mut tuple_vec = Vec::new();
+            tuple_vec.push(e1);
+            tuple_vec.push(e2);
+            if let Some(es) = es {
+                tuple_vec.extend(es);
+            }
+            Node::Tuple(tuple_vec)
+        })
+    }
+}
+
+parser! {
     fn expr[Input]()(Input) -> Node
     where [
         Input: Stream<Token = Token>,
@@ -387,8 +481,10 @@ parser! {
     ] {
         choice((
             attempt(app_expr()),
+            attempt(tuple_expr()),
             attempt(equal_expr()),
             attempt(if_expr()),
+            attempt(lettuple_expr()),
             attempt(let_expr()),
             attempt(letrec_expr()),
         ))

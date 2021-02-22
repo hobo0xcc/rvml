@@ -1,31 +1,31 @@
-use std::collections::HashMap;
+use std::{collections::HashMap, hash::Hash};
 use std::rc::Rc;
 use std::cell::RefCell;
 
 #[derive(Debug, Clone, PartialEq)]
-pub struct Environment<T>
-where T: Clone {
-    curr: HashMap<String, T>,
-    parent: Option<Rc<RefCell<Environment<T>>>>,
+pub struct Environment<K, T>
+where T: Clone, K: Hash + Eq + Clone {
+    curr: HashMap<K, T>,
+    parent: Option<Rc<RefCell<Environment<K, T>>>>,
 }
 
-impl<T> Environment<T>
-where T: Clone {
-    pub fn new() -> Environment<T> {
+impl<K, T> Environment<K, T>
+where T: Clone, K: Hash + Eq + Clone {
+    pub fn new() -> Environment<K, T> {
         Environment {
             curr: HashMap::new(),
             parent: None,
         }
     }
 
-    pub fn make_child(parent: Rc<RefCell<Environment<T>>>) -> Environment<T> {
+    pub fn make_child(parent: Rc<RefCell<Environment<K, T>>>) -> Environment<K, T> {
         Environment {
             curr: HashMap::new(),
             parent: Some(parent),
         }
     }
 
-    pub fn get(&self, key: &str) -> Option<T> {
+    pub fn get(&self, key: &K) -> Option<T> {
         if let Some(item) = self.curr.get(key) {
             return Some(item.clone());
         } else if let Some(parent) = self.parent.clone() {
@@ -38,8 +38,33 @@ where T: Clone {
         }
     }
 
-    pub fn set(&mut self, key: String, item: T) {
+    pub fn set(&mut self, key: K, item: T) {
         self.curr.insert(key, item);
+    }
+
+    pub fn map_all_elems<R, F: Fn((&K, &T)) -> R>(&self, f: F) -> Vec<R> {
+        let mut elems = Vec::new();
+        for (key, value) in self.curr.iter() {
+            elems.push(f((key, value)));
+        }
+        if let Some(ref p) = self.parent {
+            elems.extend(p.clone().borrow().map_all_elems(f));
+        }
+
+        elems
+    }
+
+    pub fn map_all_keys<R, F: Fn(&K) -> R>(&self, f: F) -> Vec<R> {
+        let mut elems = Vec::new();
+        for (key, _) in self.curr.iter() {
+            elems.push(f(key));
+        }
+
+        if let Some(ref p) = self.parent {
+            elems.extend(p.clone().borrow().map_all_keys(f));
+        }
+
+        elems
     }
 }
 
