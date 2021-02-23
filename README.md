@@ -32,7 +32,7 @@ $ cargo run
 input>> `you can write code here`
 ```
 
-Compiler will generate object file named `main` that can link to generate executable file.
+Compiler will generate object file named `main.o` that can link to generate executable file.
 For example:
 
 ```
