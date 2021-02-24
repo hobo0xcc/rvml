@@ -1,41 +1,96 @@
 extern crate combine;
 extern crate inkwell;
+extern crate clap;
 
 use rvml::tokenize::*;
 use rvml::parse::*;
 use rvml::typing::*;
 use rvml::eval::*;
 use rvml::codegen::*;
+use clap::{Arg, App};
 use io::Write;
-use std::io;
+use std::io::{self, Read};
+use std::fs;
+use std::process;
 
 #[allow(dead_code)]
 fn repl() -> io::Result<()> {
     loop {
         let mut source = String::new();
-        print!(">> ");
+        print!("repl>> ");
         io::stdout().flush()?;
         io::stdin().read_line(&mut source)?;
         let output = eval(typing(parse(tokenize(source.trim()))).0);
-        println!("{:?}", output.unwrap());
+        println!("{}", output.unwrap());
     }
 }
 
+fn read_source(name: &str) -> String {
+    let file_opt = fs::File::open(name);
+    let file = match file_opt {
+        Err(e) => {
+            println!("{}", e);
+            process::exit(1);
+        },
+        Ok(f) => f,
+    };
+    let mut f = io::BufReader::new(file);
+    
+    let mut buf = String::new();
+    match f.read_to_string(&mut buf) {
+        Err(e) => {
+            println!("{}", e);
+            process::exit(1);
+        },
+        _ => {}
+    }
+
+    return buf;
+}
+
 fn main() -> io::Result<()> {
-    // repl()?;
-    let mut source = String::new();
-    print!("input>> ");
-    io::stdout().flush()?;
-    io::stdin().read_line(&mut source)?;
+    let matches = App::new("rvml")
+                            .version("0.1.0")
+                            .author("hobo0xcc")
+                            .about("min-caml compiler with let-polymorphism")
+                            .arg(Arg::with_name("SHOW_TYPE")
+                               .short("t")
+                               .long("show-type")
+                               .help("show type"))
+                            .arg(Arg::with_name("INPUT")
+                               .help("Input file")
+                               // .required(true)
+                               .index(1))
+                            .arg(Arg::with_name("OUTPUT")
+                                .help("Output file")
+                                .short("o")
+                                .long("output")
+                                .takes_value(true))
+                            .arg(Arg::with_name("REPL")
+                                .help("repl")
+                                .long("repl"))
+                          .get_matches();
+
+    if matches.is_present("REPL") {
+        repl()?;
+        return Ok(());
+    }
+
+    let name = matches.value_of("INPUT").unwrap();
+    let source = read_source(name);
+    if matches.is_present("SHOW_TYPE") {
+        println!("{}", typing(parse(tokenize(&source))).1);
+        return Ok(());
+    }
     codegen(
         typing(
             parse(
                 tokenize(
-                    source.trim()
+                    &source
                 )
             )
         ).0,
-        "main.o".to_string(),
+        matches.value_of("OUTPUT").unwrap_or("main.o").to_string(),
         "".to_string(),
         "".to_string(),
     );

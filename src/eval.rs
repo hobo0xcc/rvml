@@ -1,7 +1,8 @@
 use crate::env::Environment;
 use crate::typing::*;
-use std::rc::Rc;
+use std::{fmt::Formatter, rc::Rc};
 use std::cell::RefCell;
+use std::fmt;
 
 #[derive(Clone, Debug, PartialEq)]
 pub enum Object {
@@ -13,6 +14,41 @@ pub enum Object {
         env: Rc<RefCell<Environment<String, Object>>>,
         args: Vec<(String, Type)>,
     },
+}
+
+impl fmt::Display for Object {
+    fn fmt(&self, f: &mut Formatter<'_>) -> fmt::Result {
+        match *self {
+            Object::Int(ref n) => write!(f, "{}", n),
+            Object::Bool(ref b) => write!(f, "{}", b),
+            Object::Tuple(ref objs) => {
+                write!(f, "(")?;
+                for (i, obj) in objs.iter().enumerate() {
+                    if i < objs.len() - 1 {
+                        write!(f, "{}, ", obj)?;
+                    } else {
+                        write!(f, "{}", obj)?;
+                    }
+                }
+                write!(f, ")")
+            },
+            Object::Func {
+                body: ref _body, 
+                env: ref _env,
+                ref args,
+            } => {
+                write!(f, "fun: ")?;
+                for (i, (name, _ty)) in args.iter().enumerate() {
+                    if i < args.len() - 1 {
+                        write!(f, "{} ", name)?;
+                    } else {
+                        write!(f, "{}", name)?;
+                    }
+                }
+                write!(f, ";")
+            }
+        }
+    }
 }
 
 #[derive(Debug)]
