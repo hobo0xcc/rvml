@@ -16,6 +16,29 @@ $ brew install llvm
 
 If you use other OS or architecture, you may need to build llvm from source. See [https://llvm.org/docs/GettingStarted.html](https://llvm.org/docs/GettingStarted.html).
 
+## CLI
+
+```
+rvml 0.1.0
+hobo0xcc
+min-caml compiler with let-polymorphism
+
+USAGE:
+    rvml [FLAGS] [OPTIONS] [INPUT]
+
+FLAGS:
+        --repl         repl
+    -t, --show-type    show type
+    -h, --help         Prints help information
+    -V, --version      Prints version information
+
+OPTIONS:
+    -o, --output <OUTPUT>    Output file
+
+ARGS:
+    <INPUT>    Input file
+```
+
 ## Build
 
 ```
@@ -25,23 +48,14 @@ $ cargo build
 ## Run
 
 ```
-$ cargo run
-
-...
-
-input>> `you can write code here`
+$ cargo run filename -o main.o
 ```
 
-Compiler will generate object file named `main.o` that can link to generate executable file.
+Compiler will generate object file that can link to generate executable file.
 For example:
 
 ```
-$ cargo run
-
-...
-
-input>> let rec f x = x in if f (f true) then f 42 else f 2
-
+$ cargo run examples/poly1.ml -o main.o
 $ gcc -o main main.o
 $ ./main
 $ echo $?    # This should put 42.
