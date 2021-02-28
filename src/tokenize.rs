@@ -88,7 +88,7 @@ parser! {
         Input: Stream<Token = char>,
         Input::Error: ParseError<char, Input::Range, Input::Position>,
     ] {
-        many1::<String, _, _>(satisfy(|c: char| c.is_alphabetic() || c == '_')).map(|s: String| match s.as_str() {
+        many1::<String, _, _>(satisfy(|c: char| c.is_alphabetic() || c == '_' || c == '.')).map(|s: String| match s.as_str() {
             "if" => Token::If,
             "then" => Token::Then,
             "else" => Token::Else,

@@ -1,11 +1,12 @@
 use crate::tokenize::*;
 use crate::parse::*;
 use crate::typing::*;
+use crate::closure::*;
 use crate::eval::*;
 
 #[allow(dead_code)]
 fn execute(input: &str) -> Object {
-    return eval(typing(parse(tokenize(input))).0).unwrap();
+    return eval(closure(typing(parse(tokenize(input))).0)).unwrap();
 }
 
 #[test]

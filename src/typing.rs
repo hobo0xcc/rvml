@@ -84,7 +84,7 @@ pub enum TypedNode {
         ty: Type,
     },
     LetExpr {
-        name: String,
+        name: (String, Type),
         first_expr: Box<TypedNode>,
         second_expr: Box<TypedNode>,
         ty: Type,
@@ -97,11 +97,10 @@ pub enum TypedNode {
         ty: Type,
     },
     LetRecExpr {
-        name: String,
+        name: (String, Type),
         args: Vec<(String, Type)>,
         first_expr: Box<TypedNode>,
         second_expr: Box<TypedNode>,
-        func_ty: Type,
         ty: Type,
     },
     App {
@@ -404,12 +403,12 @@ impl Typing {
                 self.leave_level();
 
                 let new_env = env.clone();
-                let (second_nd, second_ty) = self.typing(new_env.add((name.to_string(), first_ty)), &*second_expr)?;
+                let (second_nd, second_ty) = self.typing(new_env.add((name.to_string(), first_ty.clone())), &*second_expr)?;
 
                 let result_ty = second_ty;
 
                 Ok((TypedNode::LetExpr {
-                    name: name.to_string(),
+                    name: (name.to_string(), first_ty),
                     first_expr: Box::new(first_nd),
                     second_expr: Box::new(second_nd),
                     ty: result_ty.clone(),
@@ -463,15 +462,14 @@ impl Typing {
                 self.unify(&mut fun_tv, &mut Type::Func { args: arg_tvs.clone(), ret: Box::new(first_ty) })?;
                 let gfun_ty = self.generalize(&fun_tv);
                 let new_env_e2 = env.clone();
-                let (second_nd, second_ty) = self.typing(new_env_e2.add((name.to_string(), gfun_ty)), &*second_expr)?;
+                let (second_nd, second_ty) = self.typing(new_env_e2.add((name.to_string(), gfun_ty.clone())), &*second_expr)?;
                 
                 let result_ty = second_ty;
                 Ok((TypedNode::LetRecExpr {
-                    name: name.to_string(),
+                    name: (name.to_string(), gfun_ty),
                     args: args.into_iter().map(|s| s.to_string()).zip(arg_tvs.into_iter()).collect(),
                     first_expr: Box::new(first_nd),
                     second_expr: Box::new(second_nd),
-                    func_ty: fun_tv,
                     ty: result_ty.clone(),
                 }, result_ty))
             },
@@ -571,9 +569,10 @@ impl Typing {
                 self.deref_node(&mut **first_expr);
                 self.deref_node(&mut **second_expr);
             },
-            TypedNode::LetRecExpr { name: _, ref mut args, ref mut first_expr, ref mut second_expr, ref mut func_ty, ref mut ty } => {
+            TypedNode::LetRecExpr { ref mut name, ref mut args, ref mut first_expr, ref mut second_expr, ref mut ty } => {
+                let (ref mut _id, ref mut id_ty) = name;
                 *ty = self.deref_ty(ty);
-                *func_ty = self.deref_ty(func_ty);
+                *id_ty = self.deref_ty(id_ty);
                 for (_name, a) in args.iter_mut() {
                     *a = self.deref_ty(a);
                 }

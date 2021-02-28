@@ -10,3 +10,4 @@ edition = "2018"
 combine = "4.5.2"
 inkwell = { git = "https://github.com/TheDan64/inkwell", branch = "master", features = ["llvm11-0"] }
 clap = "2.33.3"
+rpds = "0.5.0"

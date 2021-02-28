@@ -1,10 +1,13 @@
 extern crate combine;
 extern crate inkwell;
 extern crate clap;
+extern crate rpds;
 
 use rvml::tokenize::*;
 use rvml::parse::*;
 use rvml::typing::*;
+use rvml::alpha::*;
+use rvml::closure::*;
 use rvml::eval::*;
 use rvml::codegen::*;
 use clap::{Arg, App};
@@ -14,14 +17,21 @@ use std::fs;
 use std::process;
 
 #[allow(dead_code)]
-fn repl() -> io::Result<()> {
+fn repl(show_type: bool) -> io::Result<()> {
     loop {
         let mut source = String::new();
         print!("repl>> ");
         io::stdout().flush()?;
         io::stdin().read_line(&mut source)?;
-        let output = eval(typing(parse(tokenize(source.trim()))).0);
-        println!("{}", output.unwrap());
+        if show_type {
+            let output_ty = typing(parse(tokenize(source.trim()))).1;
+            println!("{}", output_ty);
+        } else {
+            // let output = closure(alpha(typing(parse(tokenize(source.trim()))).0)).1;
+            let output = eval(closure(alpha(typing(parse(tokenize(source.trim()))).0)));
+            // let output = eval(alpha(typing(parse(tokenize(source.trim()))).0));
+            println!("{:?}", output.unwrap());
+        }
     }
 }
 
@@ -72,7 +82,7 @@ fn main() -> io::Result<()> {
                           .get_matches();
 
     if matches.is_present("REPL") {
-        repl()?;
+        repl(matches.is_present("SHOW_TYPE"))?;
         return Ok(());
     }
 
@@ -83,13 +93,17 @@ fn main() -> io::Result<()> {
         return Ok(());
     }
     codegen(
-        typing(
-            parse(
-                tokenize(
-                    &source
-                )
-            )
-        ).0,
+        closure(
+            alpha(
+                typing(
+                    parse(
+                        tokenize(
+                            &source
+                        )
+                    )
+                ).0,
+            ),
+        ),
         matches.value_of("OUTPUT").unwrap_or("main.o").to_string(),
         "".to_string(),
         "".to_string(),

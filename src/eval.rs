@@ -1,5 +1,6 @@
 use crate::env::Environment;
 use crate::typing::*;
+use crate::closure::*;
 use std::{fmt::Formatter, rc::Rc};
 use std::cell::RefCell;
 use std::fmt;
@@ -9,9 +10,9 @@ pub enum Object {
     Int(i32),
     Bool(bool),
     Tuple(Vec<Object>),
+    Closure(Box<Object>, Vec<(String, Object)>),
     Func {
-        body: Box<TypedNode>,
-        env: Rc<RefCell<Environment<String, Object>>>,
+        body: Box<CNode>,
         args: Vec<(String, Type)>,
     },
 }
@@ -32,9 +33,19 @@ impl fmt::Display for Object {
                 }
                 write!(f, ")")
             },
+            Object::Closure(ref name, ref fvs) => {
+                write!(f, "closure({}, ", name)?;
+                for (i, fv) in fvs.iter().enumerate() {
+                    if i < fvs.len() {
+                        write!(f, "{}, ", fv.0)?;
+                    } else {
+                        write!(f, "{}", fv.0)?;
+                    }
+                }
+                write!(f, ")")
+            },
             Object::Func {
                 body: ref _body, 
-                env: ref _env,
                 ref args,
             } => {
                 write!(f, "fun: ")?;
@@ -87,29 +98,45 @@ impl Eval {
         self.env.borrow_mut().set(key, item);
     }
 
-    pub fn eval(&mut self, node: &TypedNode) -> Result<Object, EvalError> {
+    pub fn eval_toplevel(&mut self, toplevel: Vec<FunDef>) {
+        for fndef in toplevel.into_iter() {
+            let mut args = Vec::new();
+            for arg in fndef.args.into_iter() {
+                args.push(arg);
+            }
+            let func_obj = Object::Func {
+                body: Box::new(fndef.body),
+                args,
+            };
+            let (ref id, ref _id_ty) = fndef.name;
+            self.bind(id.to_string(), func_obj);
+        }
+    }
+
+    pub fn eval(&mut self, node: &CNode) -> Result<Object, EvalError> {
+        use crate::closure::CNode::*;
         match *node {
-            TypedNode::Int(ref n) => {
+            Int(ref n) => {
                 return Ok(Object::Int(*n));
             }
-            TypedNode::Bool(ref b) => {
+            Bool(ref b) => {
                 return Ok(Object::Bool(*b));
             }
-            TypedNode::VarExpr(ref name, ref _ty) => {
+            VarExpr(ref name, ref _ty) => {
                 let result = self.get(name.to_string());
                 return match result {
                     Some(obj) => Ok(obj),
                     None => Err(EvalError::UndefinedVarAccess { name: name.to_string() }),
                 };
             }
-            TypedNode::Not(ref expr) => {
+            Not(ref expr) => {
                 let b = self.eval(&*expr)?;
                 return match b {
                     Object::Bool(b) => Ok(Object::Bool(!b)),
                     _ => unreachable!(),
                 };
             }
-            TypedNode::Tuple(ref tynds, ref _ty) => {
+            Tuple(ref tynds, ref _ty) => {
                 let mut objs = Vec::new();
                 for tynd in tynds.iter() {
                     let obj = self.eval(tynd)?;
@@ -118,7 +145,7 @@ impl Eval {
 
                 Ok(Object::Tuple(objs))
             }
-            TypedNode::Expr { ref lhs, ref op, ref rhs, ref ty } => {
+            Expr { ref lhs, ref op, ref rhs, ref ty } => {
                 match *ty {
                     Type::Int => {
                         let lval = match self.eval(&*lhs)? {
@@ -155,7 +182,7 @@ impl Eval {
                     _ => unreachable!(),
                 }
             }
-            TypedNode::IfExpr {
+            IfExpr {
                 ref cond,
                 ref then_body,
                 ref else_body,
@@ -173,7 +200,7 @@ impl Eval {
                     return self.eval(&*else_body);
                 }
             }
-            TypedNode::LetExpr {
+            LetExpr {
                 ref name,
                 ref first_expr,
                 ref second_expr,
@@ -183,10 +210,11 @@ impl Eval {
                 let new_env = Environment::make_child((&self.env).clone());
                 let env_rc = Rc::new(RefCell::new(new_env));
                 let mut new_eval = Eval::from(env_rc.clone());
-                new_eval.bind(name.to_string(), result);
+                let (ref id, ref _id_ty) = name;
+                new_eval.bind(id.to_string(), result);
                 return Ok(new_eval.eval(&*second_expr)?);
             }
-            TypedNode::LetTupleExpr {
+            LetTupleExpr {
                 ref names,
                 ref first_expr,
                 ref second_expr,
@@ -208,55 +236,106 @@ impl Eval {
                 }
                 return Ok(new_eval.eval(&*second_expr)?);
             },
-            TypedNode::LetRecExpr {
+            MakeCls {
                 ref name,
-                ref args,
-                ref first_expr,
+                ref actual_fv,
                 ref second_expr,
-                func_ty: ref _func_ty,
                 ty: ref _ty,
             } => {
-                let new_env = Environment::make_child((&self.env).clone());
-                let func_env = Rc::new(RefCell::new(new_env));
-                let mut new_eval = Eval::from(func_env.clone());
-                let func_obj = Object::Func {
-                    body: first_expr.clone(),
-                    env: func_env.clone(),
-                    args: args.clone(),
-                };
-                new_eval.bind(name.to_string(), func_obj);
+                let new_env = Environment::make_child(self.env.clone());
+                let closure_env = Rc::new(RefCell::new(new_env));
+                let mut new_eval = Eval::from(closure_env.clone());
+                
+                let mut closure_fvs = Vec::new();
+                for name in actual_fv.iter() {
+                    closure_fvs.push((name.to_string(), self.env.borrow().get(name).unwrap()));
+                }
+
+                let (ref id, ref _id_ty) = name;
+
+                let closure_obj = Object::Closure(Box::new(self.env.borrow().get(id).unwrap()), closure_fvs);
+                new_eval.bind(id.to_string(), closure_obj);
                 let result = new_eval.eval(&*second_expr)?;
                 Ok(result)
-            }
-            TypedNode::App { ref func, ref args, func_ty: ref _func_ty, ty: ref _ty } => {
-                let (func_body, func_env, func_args) = match self.eval(&*func)? {
-                    Object::Func { body, env, args } => (body, env, args),
+            },
+            // LetRecExpr {
+            //     ref name,
+            //     ref args,
+            //     ref first_expr,
+            //     ref second_expr,
+            //     ty: ref _ty,
+            // } => {
+            //     let new_env = Environment::make_child((&self.env).clone());
+            //     let func_env = Rc::new(RefCell::new(new_env));
+            //     let mut new_eval = Eval::from(func_env.clone());
+            //     let func_obj = Object::Func {
+            //         body: first_expr.clone(),
+            //         env: func_env.clone(),
+            //         args: args.clone(),
+            //     };
+            //     let (ref id, ref _id_ty) = name;
+            //     new_eval.bind(id.to_string(), func_obj);
+            //     let result = new_eval.eval(&*second_expr)?;
+            //     Ok(result)
+            // }
+            AppCls { ref func, ref args, func_ty: ref _func_ty, ty: ref _ty } => {
+                let clos = self.eval(&*func)?;
+                let mut new_func_env = Environment::new();
+                let (func_obj, fvs) = match clos {
+                    Object::Closure(func_obj, fvs) => (*func_obj, fvs),
                     _ => unreachable!(),
                 };
-                let mut new_func_env = Environment::make_child(func_env);
-                let mut cnt: usize = 0;
-                for ((name, _ty), node) in func_args.iter().zip(args.into_iter()) {
-                    new_func_env.set(name.to_string(), self.eval(&node)?);
-                    cnt += 1;
+                for (fv_name, fv_obj) in fvs.into_iter() {
+                    new_func_env.set(fv_name, fv_obj);
+                }
+                let (func_body, arg_names) = match func_obj {
+                    Object::Func { body, args } => {
+                        (body, args.iter().map(|t| t.0.to_string()).collect::<Vec<String>>())
+                    },
+                    _ => unreachable!(),
+                };
+                for (arg_name, arg) in arg_names.iter().zip(args.iter()) {
+                    new_func_env.set(arg_name.to_string(), self.eval(arg)?);
                 }
                 let env_rc = Rc::new(RefCell::new(new_func_env));
-                if cnt >= func_args.len() {
-                    let mut func_eval = Eval::from(env_rc);
-                    let result = func_eval.eval(&*func_body)?;
-                    return Ok(result);
-                } else {
-                    return Ok(Object::Func {
-                        body: func_body,
-                        env: env_rc,
-                        args: func_args[cnt..].to_vec(),
-                    });
+                let mut func_eval = Eval::from(env_rc);
+                let result = func_eval.eval(&*func_body)?;
+                return Ok(result);
+                // if cnt >= func_args.len() {
+                //     let mut func_eval = Eval::from(env_rc);
+                //     let result = func_eval.eval(&*func_body)?;
+                //     return Ok(result);
+                // } else {
+                //     return Ok(Object::Func {
+                //         body: func_body,
+                //         env: env_rc,
+                //         args: func_args[cnt..].to_vec(),
+                //     });
+                // }
+            },
+            AppDir { ref func, ref args, func_ty: ref _func_ty, ty: ref _ty } => {
+                let func_obj = self.env.borrow().get(func).unwrap();
+                let (func_body, func_arg_names) = match func_obj {
+                    Object::Func { body, args } => {
+                        (body, args.iter().map(|t| t.0.to_string()).collect::<Vec<String>>())
+                    },
+                    _ => unreachable!(),
+                };
+                let mut func_env = Environment::new();
+                for (arg_name, arg) in func_arg_names.iter().zip(args.iter()) {
+                    func_env.set(arg_name.to_string(), self.eval(arg)?);
                 }
-            }
+                let env_rc = Rc::new(RefCell::new(func_env));
+                let mut func_eval = Eval::from(env_rc);
+                let result = func_eval.eval(&*func_body)?;
+                return Ok(result);
+            },
         }
     }
 }
 
-pub fn eval(node: TypedNode) -> Result<Object, EvalError> {
+pub fn eval(prog: (Vec<FunDef>, CNode)) -> Result<Object, EvalError> {
     let mut e = Eval::new();
-    e.eval(&node)
+    e.eval_toplevel(prog.0);
+    e.eval(&prog.1)
 }
