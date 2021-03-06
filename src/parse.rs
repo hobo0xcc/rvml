@@ -50,10 +50,7 @@ pub struct Parser {
 
 impl Parser {
     pub fn new(tokens: Vec<Token>) -> Parser {
-        Parser {
-            tokens,
-            curr: 0,
-        }
+        Parser { tokens, curr: 0 }
     }
 
     pub fn peek(&self, offset: usize) -> Token {
@@ -138,7 +135,10 @@ impl Parser {
     }
 
     pub fn formal_args(&mut self) -> Vector<String> {
-        let is_ident = |tok: &Token| match *tok { Token::Ident(_) => true, _ => false };
+        let is_ident = |tok: &Token| match *tok {
+            Token::Ident(_) => true,
+            _ => false,
+        };
         let mut args = Vector::new();
         while let Some(tok) = self.read_if(is_ident) {
             let name = match tok {
@@ -171,7 +171,10 @@ impl Parser {
 
     pub fn tuple_ids(&mut self) -> Vector<String> {
         self.expect(&Token::LParen);
-        let is_ident = |tok: &Token| match *tok { Token::Ident(_) => true, _ => false };
+        let is_ident = |tok: &Token| match *tok {
+            Token::Ident(_) => true,
+            _ => false,
+        };
         let mut ids = Vector::new();
         while let Some(tok) = self.read_if(is_ident) {
             let name = match tok {
@@ -182,7 +185,7 @@ impl Parser {
             match self.curr() {
                 Token::Comma => {
                     self.next();
-                },
+                }
                 _ => break,
             }
         }
@@ -210,14 +213,14 @@ impl Parser {
                     Token::RParen => {
                         self.next();
                         return Some(Node::Unit);
-                    },
+                    }
                     _ => {
                         let e = self.expr(0);
                         self.expect(&Token::RParen);
-                        return Some(e)
+                        return Some(e);
                     }
                 }
-            },
+            }
             _ => return None,
         };
 
@@ -233,9 +236,9 @@ impl Parser {
                 let rhs = self.expr(r_bp);
                 match op.as_str() {
                     "not" => Node::Not(Box::new(rhs)),
-                    _ => unreachable!()
+                    _ => unreachable!(),
                 }
-            },
+            }
             Token::If => {
                 self.next();
                 let ((), r_bp) = self.prefix_bp("if");
@@ -250,7 +253,7 @@ impl Parser {
                     then_body: Box::new(e1),
                     else_body: Box::new(e2),
                 }
-            },
+            }
             Token::Let => {
                 self.next();
                 let ((), r_bp) = self.prefix_bp("let");
@@ -277,7 +280,7 @@ impl Parser {
                             first_expr: Box::new(e1),
                             second_expr: Box::new(e2),
                         };
-                    },
+                    }
                     Token::LParen => {
                         let ids = self.tuple_ids();
                         self.expect(&Token::Op("=".to_string()));
@@ -290,7 +293,7 @@ impl Parser {
                             first_expr: Box::new(e1),
                             second_expr: Box::new(e2),
                         };
-                    },
+                    }
                     _ => {
                         let name = match self.read() {
                             Token::Ident(s) => s,
@@ -312,23 +315,21 @@ impl Parser {
                         };
                     }
                 }
-            },
-            _ => {
-                match self.simple_expr() {
-                    Some(nd) => {
-                        if let Some(args) = self.actual_args() {
-                            Node::App {
-                                func: Box::new(nd),
-                                args,
-                            }
-                        } else {
-                            nd
+            }
+            _ => match self.simple_expr() {
+                Some(nd) => {
+                    if let Some(args) = self.actual_args() {
+                        Node::App {
+                            func: Box::new(nd),
+                            args,
                         }
-                    },
-                    None => {
-                        println!("Bad token: {}", self.curr());
-                        process::exit(1);
+                    } else {
+                        nd
                     }
+                }
+                None => {
+                    println!("Bad token: {}", self.curr());
+                    process::exit(1);
                 }
             },
         };
@@ -368,9 +369,7 @@ impl Parser {
                 match op.as_str() {
                     "," => {
                         let elems = match lhs {
-                            Node::Tuple(ref old_elems) => {
-                                old_elems.push_back(rhs)
-                            },
+                            Node::Tuple(ref old_elems) => old_elems.push_back(rhs),
                             _ => {
                                 let mut new_elems = Vector::new();
                                 new_elems = new_elems.push_back(lhs);
@@ -378,14 +377,14 @@ impl Parser {
                             }
                         };
                         lhs = Node::Tuple(elems);
-                    },
+                    }
                     ";" => {
                         lhs = Node::LetExpr {
                             name: "_".to_string(),
                             first_expr: Box::new(lhs),
                             second_expr: Box::new(rhs),
                         };
-                    },
+                    }
                     _ => {
                         lhs = Node::Expr {
                             lhs: Box::new(lhs),

@@ -1,16 +1,16 @@
-use crate::parse::Node;
 use crate::env::DeBruijn;
+use crate::parse::Node;
 use rpds::HashTrieMap;
-use std::{cmp::min, rc::Rc};
 use std::cell::Cell;
 use std::collections::HashMap;
-use std::process;
 use std::fmt;
+use std::process;
+use std::{cmp::min, rc::Rc};
 
 #[derive(Debug, Copy, Clone, PartialEq)]
 pub enum TypeVar {
     Unbound(usize, usize), // (id, level)
-    Link(usize), // id
+    Link(usize),           // id
 }
 
 #[derive(Debug, Clone, PartialEq)]
@@ -20,12 +20,9 @@ pub enum Type {
     Float,
     Bool,
     Tuple(Vec<Type>),
-    Func {
-        args: Vec<Type>,
-        ret: Box<Type>,
-    },
+    Func { args: Vec<Type>, ret: Box<Type> },
     TVar(Rc<Cell<TypeVar>>), // Type variable
-    QVar(usize), // Quantified type variable
+    QVar(usize),             // Quantified type variable
 }
 
 impl Type {
@@ -41,18 +38,15 @@ impl Type {
                     ty_name = format!("{}_{}", ty_name, ty.to_string());
                 }
                 ty_name
-            },
-            Type::Func {
-                ref args,
-                ref ret,
-            } => {
+            }
+            Type::Func { ref args, ref ret } => {
                 let mut ty_name = args.get(0).unwrap().to_string();
                 for ty in args.iter().skip(1) {
                     ty_name = format!("{}_{}", ty_name, ty.to_string());
                 }
                 ty_name = format!("{}_{}", ty_name, (&**ret).to_string());
                 ty_name
-            },
+            }
             Type::TVar(_) | Type::QVar(_) => "var".to_string(),
         }
     }
@@ -75,7 +69,7 @@ impl fmt::Display for Type {
                 }
 
                 Ok(())
-            },
+            }
             Type::Func { ref args, ref ret } => {
                 write!(f, "(")?;
                 for a in args.iter() {
@@ -83,15 +77,13 @@ impl fmt::Display for Type {
                 }
                 write!(f, "{}", **ret)?;
                 write!(f, ")")
-            },
-            Type::TVar(ref tv) => {
-                match tv.get() {
-                    TypeVar::Unbound(id, level) => {
-                        write!(f, "t{}/{}", id, level)
-                    },
-                    TypeVar::Link(id) => {
-                        write!(f, "t{}", id)
-                    }
+            }
+            Type::TVar(ref tv) => match tv.get() {
+                TypeVar::Unbound(id, level) => {
+                    write!(f, "t{}/{}", id, level)
+                }
+                TypeVar::Link(id) => {
+                    write!(f, "t{}", id)
                 }
             },
             Type::QVar(ref id) => {
@@ -221,20 +213,23 @@ impl Typing {
                         };
                         Rc::clone(tvr2).set(TypeVar::Unbound(*id, min_level));
                         false
-                    },
+                    }
                     TypeVar::Link(ref mut ty2) => {
                         return self.occurs_check(tvr1, &mut self.get_typevar_link(*ty2).unwrap());
                     }
-                }
-            },
-            Type::Func { args: ref mut arg_types, ret: ref mut ret_type } => {
+                };
+            }
+            Type::Func {
+                args: ref mut arg_types,
+                ret: ref mut ret_type,
+            } => {
                 let mut result = false;
                 for arg_ty in arg_types.iter_mut() {
                     result &= self.occurs_check(tvr1, arg_ty);
                 }
                 result &= self.occurs_check(tvr1, &mut **ret_type);
                 return result;
-            },
+            }
             _ => return false,
         }
     }
@@ -244,7 +239,8 @@ impl Typing {
             return Ok(());
         }
         match (t1, t2) {
-            (&mut Type::TVar(ref mut tv), &mut ref mut t_) | (&mut ref mut t_, &mut Type::TVar(ref mut tv)) => {
+            (&mut Type::TVar(ref mut tv), &mut ref mut t_)
+            | (&mut ref mut t_, &mut Type::TVar(ref mut tv)) => {
                 match Rc::clone(&tv).get() {
                     TypeVar::Unbound(ref id, ref _level) => {
                         if self.occurs_check(&Rc::clone(tv).get(), t_) {
@@ -252,14 +248,23 @@ impl Typing {
                             // return Err(TypingError::OccursInside);
                         }
                         tv.set(self.link_typevar(*id, t_.clone()));
-                    },
+                    }
                     TypeVar::Link(ref mut id) => {
                         let mut linked_ty = self.get_typevar_link(*id).unwrap();
                         self.unify(t_, &mut linked_ty)?;
                     }
                 }
-            },
-            (Type::Func { args: ref mut args1, ret: ref mut ret1 }, Type::Func { args: ref mut args2, ret: ref mut ret2 }) => {
+            }
+            (
+                Type::Func {
+                    args: ref mut args1,
+                    ret: ref mut ret1,
+                },
+                Type::Func {
+                    args: ref mut args2,
+                    ret: ref mut ret2,
+                },
+            ) => {
                 if args1.len() != args2.len() {
                     return Err(TypingError::SizeUnmatched);
                 }
@@ -267,7 +272,7 @@ impl Typing {
                     self.unify(a1, a2)?;
                 }
                 self.unify(&mut *ret1, &mut *ret2)?;
-            },
+            }
             (Type::Tuple(ref mut tys1), Type::Tuple(ref mut tys2)) => {
                 if tys1.len() != tys2.len() {
                     return Err(TypingError::SizeUnmatched);
@@ -275,10 +280,8 @@ impl Typing {
                 for (ty1, ty2) in tys1.iter_mut().zip(tys2.iter_mut()) {
                     self.unify(ty1, ty2)?;
                 }
-            },
-            _ => return {
-                Err(TypingError::TypeUnmatched)
             }
+            _ => return { Err(TypingError::TypeUnmatched) },
         }
 
         return Ok(());
@@ -286,28 +289,25 @@ impl Typing {
 
     pub fn generalize(&self, ty: &Type) -> Type {
         match *ty {
-            Type::TVar(ref tv) => {
-                match Rc::clone(tv).get() {
-                    TypeVar::Unbound(ref id, ref level) if *level > self.curr_level => {
-                        Type::QVar(*id)
-                    },
-                    TypeVar::Link(ref id) => {
-                        let linked_ty = self.get_typevar_link(*id).unwrap();
-                        self.generalize(&linked_ty)
-                    },
-                    _ => ty.clone(),
+            Type::TVar(ref tv) => match Rc::clone(tv).get() {
+                TypeVar::Unbound(ref id, ref level) if *level > self.curr_level => Type::QVar(*id),
+                TypeVar::Link(ref id) => {
+                    let linked_ty = self.get_typevar_link(*id).unwrap();
+                    self.generalize(&linked_ty)
                 }
+                _ => ty.clone(),
             },
-            Type::Func { args: ref arg_types, ret: ref ret_type } => {
-                Type::Func {
-                    args: arg_types.iter().map(|ty| self.generalize(ty)).collect(),
-                    ret: Box::new(self.generalize(&*ret_type)),
-                }
+            Type::Func {
+                args: ref arg_types,
+                ret: ref ret_type,
+            } => Type::Func {
+                args: arg_types.iter().map(|ty| self.generalize(ty)).collect(),
+                ret: Box::new(self.generalize(&*ret_type)),
             },
             Type::Tuple(ref types) => {
                 Type::Tuple(types.iter().map(|ty| self.generalize(ty)).collect())
-            },
-            _ => ty.clone()
+            }
+            _ => ty.clone(),
         }
     }
 
@@ -322,15 +322,13 @@ impl Typing {
                         (tv.clone(), subst.insert(*id, tv))
                     }
                 }
-            },
-            Type::TVar(ref tv) => {
-                match tv.get() {
-                    TypeVar::Link(id) => {
-                        let ty = self.get_typevar_link(id).unwrap();
-                        self.instantiate_loop(subst, &ty)
-                    },
-                    _ => (ty.clone(), subst),
+            }
+            Type::TVar(ref tv) => match tv.get() {
+                TypeVar::Link(id) => {
+                    let ty = self.get_typevar_link(id).unwrap();
+                    self.instantiate_loop(subst, &ty)
                 }
+                _ => (ty.clone(), subst),
             },
             Type::Func { ref args, ref ret } => {
                 let mut subst_fn = subst.clone();
@@ -342,12 +340,15 @@ impl Typing {
                 }
                 let (new_ret, new_subst) = self.instantiate_loop(subst_fn, &*ret);
                 subst_fn = new_subst;
-                
-                (Type::Func {
-                    args: new_args,
-                    ret: Box::new(new_ret),
-                }, subst_fn)
-            },
+
+                (
+                    Type::Func {
+                        args: new_args,
+                        ret: Box::new(new_ret),
+                    },
+                    subst_fn,
+                )
+            }
             Type::Tuple(ref tys) => {
                 let mut subst_tup = subst.clone();
                 let mut new_tys = Vec::new();
@@ -359,7 +360,7 @@ impl Typing {
 
                 (Type::Tuple(new_tys), subst_tup)
             }
-            _ => (ty.clone(), subst)
+            _ => (ty.clone(), subst),
         }
     }
 
@@ -373,26 +374,22 @@ impl Typing {
             Node::Int(ref n) => Ok((TypedNode::Int(*n), Type::Int)),
             Node::Float(ref f) => Ok((TypedNode::Float(*f), Type::Float)),
             Node::Bool(ref b) => Ok((TypedNode::Bool(*b), Type::Bool)),
-            Node::VarExpr(ref name) => {
-                match env.assoc(name.to_string()) {
-                    Some(ty) => {
-                        let (t, subst) = self.instantiate(&ty);
-                        Ok((TypedNode::VarExpr(name.to_string(), t.clone(), subst), t))
-                    },
-                    None => {
-                        let ty = self.new_typevar();
-                        Ok((TypedNode::VarExtExpr(name.to_string(), ty.clone()), ty))
-                    }
+            Node::VarExpr(ref name) => match env.assoc(name.to_string()) {
+                Some(ty) => {
+                    let (t, subst) = self.instantiate(&ty);
+                    Ok((TypedNode::VarExpr(name.to_string(), t.clone(), subst), t))
+                }
+                None => {
+                    let ty = self.new_typevar();
+                    Ok((TypedNode::VarExtExpr(name.to_string(), ty.clone()), ty))
                 }
             },
             Node::Not(ref expr) => {
                 let (expr_nd, mut expr_ty) = self.typing(env.clone(), &*expr)?;
                 self.unify(&mut expr_ty, &mut Type::Bool)?;
                 let result_ty = Type::Bool;
-                Ok((TypedNode::Not(
-                    Box::new(expr_nd),
-                ), result_ty))
-            },
+                Ok((TypedNode::Not(Box::new(expr_nd)), result_ty))
+            }
             Node::Tuple(ref exprs) => {
                 let mut typed_exprs = Vec::new();
                 let mut types = Vec::new();
@@ -402,13 +399,14 @@ impl Typing {
                     types.push(ty);
                 }
 
-                let result_ty  = Type::Tuple(types);
-                Ok((
-                    TypedNode::Tuple(typed_exprs, result_ty.clone()),
-                    result_ty,
-                ))
-            },
-            Node::Expr { ref lhs, ref op, ref rhs } => {
+                let result_ty = Type::Tuple(types);
+                Ok((TypedNode::Tuple(typed_exprs, result_ty.clone()), result_ty))
+            }
+            Node::Expr {
+                ref lhs,
+                ref op,
+                ref rhs,
+            } => {
                 let mut self_ty = self.new_typevar();
                 let (lhs_nd, mut lhs_ty) = self.typing(env.clone(), &*lhs)?;
                 let (rhs_nd, mut rhs_ty) = self.typing(env.clone(), &*rhs)?;
@@ -419,7 +417,7 @@ impl Typing {
                     _ => {
                         println!("Unknown op: {}", op);
                         process::exit(1);
-                    },
+                    }
                 };
                 self.unify(&mut lhs_ty, &mut operand_ty)?;
                 self.unify(&mut rhs_ty, &mut operand_ty)?;
@@ -427,14 +425,21 @@ impl Typing {
 
                 let result_ty = self_ty;
 
-                Ok((TypedNode::Expr {
-                    lhs: Box::new(lhs_nd),
-                    op: op.to_string(),
-                    rhs: Box::new(rhs_nd),
-                    ty: result_ty.clone(),
-                }, result_ty))
-            },
-            Node::IfExpr { ref cond, ref then_body, ref else_body } => {
+                Ok((
+                    TypedNode::Expr {
+                        lhs: Box::new(lhs_nd),
+                        op: op.to_string(),
+                        rhs: Box::new(rhs_nd),
+                        ty: result_ty.clone(),
+                    },
+                    result_ty,
+                ))
+            }
+            Node::IfExpr {
+                ref cond,
+                ref then_body,
+                ref else_body,
+            } => {
                 let mut self_ty = self.new_typevar();
                 let (cond_nd, mut cond_ty) = self.typing(env.clone(), cond)?;
                 let (then_nd, mut then_ty) = self.typing(env.clone(), then_body)?;
@@ -446,31 +451,48 @@ impl Typing {
 
                 let result_ty = self_ty;
 
-                Ok((TypedNode::IfExpr {
-                    cond: Box::new(cond_nd),
-                    then_body: Box::new(then_nd),
-                    else_body: Box::new(else_nd),
-                    ty: result_ty.clone(),
-                }, result_ty))
-            },
-            Node::LetExpr { ref name, ref first_expr, ref second_expr } => {
+                Ok((
+                    TypedNode::IfExpr {
+                        cond: Box::new(cond_nd),
+                        then_body: Box::new(then_nd),
+                        else_body: Box::new(else_nd),
+                        ty: result_ty.clone(),
+                    },
+                    result_ty,
+                ))
+            }
+            Node::LetExpr {
+                ref name,
+                ref first_expr,
+                ref second_expr,
+            } => {
                 self.enter_level();
                 let (first_nd, first_ty) = self.typing(env.clone(), &*first_expr)?;
                 self.leave_level();
 
                 let new_env = env.clone();
-                let (second_nd, second_ty) = self.typing(new_env.add((name.to_string(), first_ty.clone())), &*second_expr)?;
+                let (second_nd, second_ty) = self.typing(
+                    new_env.add((name.to_string(), first_ty.clone())),
+                    &*second_expr,
+                )?;
 
                 let result_ty = second_ty;
 
-                Ok((TypedNode::LetExpr {
-                    name: (name.to_string(), first_ty),
-                    first_expr: Box::new(first_nd),
-                    second_expr: Box::new(second_nd),
-                    ty: result_ty.clone(),
-                }, result_ty))
-            },
-            Node::LetTupleExpr { ref names, ref first_expr, ref second_expr } => {
+                Ok((
+                    TypedNode::LetExpr {
+                        name: (name.to_string(), first_ty),
+                        first_expr: Box::new(first_nd),
+                        second_expr: Box::new(second_nd),
+                        ty: result_ty.clone(),
+                    },
+                    result_ty,
+                ))
+            }
+            Node::LetTupleExpr {
+                ref names,
+                ref first_expr,
+                ref second_expr,
+            } => {
                 self.enter_level();
                 let (first_nd, mut first_ty) = self.typing(env.clone(), &*first_expr)?;
                 self.leave_level();
@@ -493,15 +515,23 @@ impl Typing {
 
                 let result_ty = second_ty;
 
-                Ok((TypedNode::LetTupleExpr {
-                    names: name_tys,
-                    first_expr: Box::new(first_nd),
-                    second_expr: Box::new(second_nd),
-                    tuple_ty,
-                    ty: result_ty.clone(),
-                }, result_ty))
-            },
-            Node::LetRecExpr { ref name, ref args, ref first_expr, ref second_expr } => {
+                Ok((
+                    TypedNode::LetTupleExpr {
+                        names: name_tys,
+                        first_expr: Box::new(first_nd),
+                        second_expr: Box::new(second_nd),
+                        tuple_ty,
+                        ty: result_ty.clone(),
+                    },
+                    result_ty,
+                ))
+            }
+            Node::LetRecExpr {
+                ref name,
+                ref args,
+                ref first_expr,
+                ref second_expr,
+            } => {
                 self.enter_level();
                 let mut fun_tv = self.new_typevar();
                 let mut arg_tvs = Vec::new();
@@ -515,20 +545,36 @@ impl Typing {
                 }
                 let (first_nd, first_ty) = self.typing(new_env_e1, &*first_expr)?;
                 self.leave_level();
-                self.unify(&mut fun_tv, &mut Type::Func { args: arg_tvs.clone(), ret: Box::new(first_ty) })?;
+                self.unify(
+                    &mut fun_tv,
+                    &mut Type::Func {
+                        args: arg_tvs.clone(),
+                        ret: Box::new(first_ty),
+                    },
+                )?;
                 let gfun_ty = self.generalize(&fun_tv);
                 let new_env_e2 = env.clone();
-                let (second_nd, second_ty) = self.typing(new_env_e2.add((name.to_string(), gfun_ty.clone())), &*second_expr)?;
-                
+                let (second_nd, second_ty) = self.typing(
+                    new_env_e2.add((name.to_string(), gfun_ty.clone())),
+                    &*second_expr,
+                )?;
+
                 let result_ty = second_ty;
-                Ok((TypedNode::LetRecExpr {
-                    name: (name.to_string(), gfun_ty),
-                    args: args.into_iter().map(|s| s.to_string()).zip(arg_tvs.into_iter()).collect(),
-                    first_expr: Box::new(first_nd),
-                    second_expr: Box::new(second_nd),
-                    ty: result_ty.clone(),
-                }, result_ty))
-            },
+                Ok((
+                    TypedNode::LetRecExpr {
+                        name: (name.to_string(), gfun_ty),
+                        args: args
+                            .into_iter()
+                            .map(|s| s.to_string())
+                            .zip(arg_tvs.into_iter())
+                            .collect(),
+                        first_expr: Box::new(first_nd),
+                        second_expr: Box::new(second_nd),
+                        ty: result_ty.clone(),
+                    },
+                    result_ty,
+                ))
+            }
             Node::App { ref func, ref args } => {
                 let (fun_nd, mut fun_ty) = self.typing(env.clone(), &*func)?;
                 let mut arg_tys = Vec::new();
@@ -540,15 +586,24 @@ impl Typing {
                 }
 
                 let ret_ty = self.new_typevar();
-                self.unify(&mut fun_ty, &mut Type::Func { args: arg_tys, ret: Box::new(ret_ty.clone()) })?;
+                self.unify(
+                    &mut fun_ty,
+                    &mut Type::Func {
+                        args: arg_tys,
+                        ret: Box::new(ret_ty.clone()),
+                    },
+                )?;
 
                 let result_ty = ret_ty;
-                Ok((TypedNode::App {
-                    func: Box::new(fun_nd),
-                    args: arg_nds,
-                    func_ty: fun_ty,
-                    ty: result_ty.clone(),
-                }, result_ty))
+                Ok((
+                    TypedNode::App {
+                        func: Box::new(fun_nd),
+                        args: arg_nds,
+                        func_ty: fun_ty,
+                        ty: result_ty.clone(),
+                    },
+                    result_ty,
+                ))
             }
         }
     }
@@ -567,20 +622,14 @@ impl Typing {
                 }
 
                 Type::Tuple(new_tys)
+            }
+            Type::Func { ref args, ref ret } => Type::Func {
+                args: args.iter().map(|a| self.deref_ty(a)).collect(),
+                ret: Box::new(self.deref_ty(&**ret)),
             },
-            Type::Func { ref args, ref ret } => {
-                Type::Func {
-                    args: args.iter().map(|a| self.deref_ty(a)).collect(),
-                    ret: Box::new(self.deref_ty(&**ret)),
-                }
-            },
-            Type::TVar(ref tv) => {
-                match tv.get() {
-                    TypeVar::Link(ref id) => {
-                        self.deref_ty(&self.type_vars.get(id).unwrap().clone())
-                    },
-                    _ => Type::TVar(tv.clone()),
-                }
+            Type::TVar(ref tv) => match tv.get() {
+                TypeVar::Link(ref id) => self.deref_ty(&self.type_vars.get(id).unwrap().clone()),
+                _ => Type::TVar(tv.clone()),
             },
             Type::QVar(ref id) => Type::QVar(*id),
         }
@@ -588,48 +637,69 @@ impl Typing {
 
     pub fn deref_node(&self, node: &mut TypedNode) {
         match *node {
-            TypedNode::Unit => {},
-            TypedNode::Int(_) => {},
-            TypedNode::Float(_) => {},
-            TypedNode::Bool(_) => {},
+            TypedNode::Unit => {}
+            TypedNode::Int(_) => {}
+            TypedNode::Float(_) => {}
+            TypedNode::Bool(_) => {}
             TypedNode::VarExpr(_, ref mut ty, ref mut subst) => {
                 *ty = self.deref_ty(ty);
                 let subst_cl = subst.clone();
                 for (key, val) in subst_cl.iter() {
                     subst.insert_mut(key.clone(), self.deref_ty(val));
                 }
-            },
+            }
             TypedNode::VarExtExpr(_, ref mut ty) => {
                 *ty = self.deref_ty(ty);
-            },
+            }
             TypedNode::Not(ref mut expr) => {
                 self.deref_node(&mut **expr);
-            },
+            }
             TypedNode::Tuple(ref mut tynds, ref mut ty) => {
                 *ty = self.deref_ty(ty);
                 for tynd in tynds.iter_mut() {
                     self.deref_node(tynd);
                 }
-            },
-            TypedNode::Expr { ref mut lhs, op: _, ref mut rhs, ref mut ty } => {
+            }
+            TypedNode::Expr {
+                ref mut lhs,
+                op: _,
+                ref mut rhs,
+                ref mut ty,
+            } => {
                 *ty = self.deref_ty(ty);
                 self.deref_node(&mut **lhs);
                 self.deref_node(&mut **rhs);
-            },
-            TypedNode::IfExpr { ref mut cond, ref mut then_body, ref mut else_body, ref mut ty } => {
+            }
+            TypedNode::IfExpr {
+                ref mut cond,
+                ref mut then_body,
+                ref mut else_body,
+                ref mut ty,
+            } => {
                 *ty = self.deref_ty(ty);
                 self.deref_node(&mut **cond);
                 self.deref_node(&mut **then_body);
                 self.deref_node(&mut **else_body);
-            },
-            TypedNode::LetExpr { ref mut name, ref mut first_expr, ref mut second_expr, ref mut ty } => {
+            }
+            TypedNode::LetExpr {
+                ref mut name,
+                ref mut first_expr,
+                ref mut second_expr,
+                ref mut ty,
+            } => {
                 let (_, ref mut name_ty) = name;
                 *name_ty = self.deref_ty(name_ty);
                 *ty = self.deref_ty(ty);
                 self.deref_node(&mut **first_expr);
                 self.deref_node(&mut **second_expr);
-            },
-            TypedNode::LetTupleExpr { ref mut names, ref mut first_expr, ref mut second_expr, ref mut tuple_ty, ref mut ty } => {
+            }
+            TypedNode::LetTupleExpr {
+                ref mut names,
+                ref mut first_expr,
+                ref mut second_expr,
+                ref mut tuple_ty,
+                ref mut ty,
+            } => {
                 *ty = self.deref_ty(ty);
                 *tuple_ty = self.deref_ty(tuple_ty);
                 for (_name, ty) in names.iter_mut() {
@@ -637,8 +707,14 @@ impl Typing {
                 }
                 self.deref_node(&mut **first_expr);
                 self.deref_node(&mut **second_expr);
-            },
-            TypedNode::LetRecExpr { ref mut name, ref mut args, ref mut first_expr, ref mut second_expr, ref mut ty } => {
+            }
+            TypedNode::LetRecExpr {
+                ref mut name,
+                ref mut args,
+                ref mut first_expr,
+                ref mut second_expr,
+                ref mut ty,
+            } => {
                 let (ref mut _id, ref mut id_ty) = name;
                 *ty = self.deref_ty(ty);
                 *id_ty = self.deref_ty(id_ty);
@@ -647,8 +723,13 @@ impl Typing {
                 }
                 self.deref_node(&mut **first_expr);
                 self.deref_node(&mut **second_expr);
-            },
-            TypedNode::App { ref mut func, ref mut args, ref mut func_ty, ref mut ty } => {
+            }
+            TypedNode::App {
+                ref mut func,
+                ref mut args,
+                ref mut func_ty,
+                ref mut ty,
+            } => {
                 *ty = self.deref_ty(ty);
                 *func_ty = self.deref_ty(func_ty);
                 self.deref_node(&mut **func);
@@ -660,12 +741,8 @@ impl Typing {
     }
 }
 
-static PRIMITIVES: &'static [&'static str] = &[
-    "float_of_int",
-    "print_float",
-    "print_int",
-    "print_newline",
-];
+static PRIMITIVES: &'static [&'static str] =
+    &["float_of_int", "print_float", "print_int", "print_newline"];
 
 pub fn is_primitive(name: &str) -> bool {
     for prim in PRIMITIVES.iter() {
@@ -680,7 +757,7 @@ pub fn is_primitive(name: &str) -> bool {
 pub fn primitive_func(env: Env) -> Env {
     let float_of_int_ty = Type::Func {
         args: vec![Type::Int],
-        ret: Box::new(Type::Float)
+        ret: Box::new(Type::Float),
     };
     let print_float = Type::Func {
         args: vec![Type::Float],
@@ -695,8 +772,7 @@ pub fn primitive_func(env: Env) -> Env {
         ret: Box::new(Type::Unit),
     };
 
-    env
-        .add(("float_of_int".to_string(), float_of_int_ty))
+    env.add(("float_of_int".to_string(), float_of_int_ty))
         .add(("print_float".to_string(), print_float))
         .add(("print_int".to_string(), print_int_ty))
         .add(("print_newline".to_string(), print_newline_ty))
@@ -710,11 +786,11 @@ pub fn typing(node: Node) -> (TypedNode, Type) {
         Ok((mut nd, ref ty)) => {
             t.deref_node(&mut nd);
             (nd, t.deref_ty(ty))
-        },
+        }
         Err(e) => {
             println!("{:?}", e);
             process::exit(1);
-        },
+        }
     }
 }
 
@@ -722,7 +798,10 @@ pub fn typing(node: Node) -> (TypedNode, Type) {
 fn occurs_check_1() {
     let mut t = Typing::new();
     let test_tv = t.new_typevar();
-    let tv = match test_tv { Type::TVar(ref tv) => tv.clone(), _ => unreachable!(), };
+    let tv = match test_tv {
+        Type::TVar(ref tv) => tv.clone(),
+        _ => unreachable!(),
+    };
     {
         let mut test_ty = Type::Func {
             args: vec![test_tv.clone(), Type::Bool],
@@ -748,7 +827,7 @@ fn unify_1() {
     {
         let mut test_ty1 = Type::Bool;
         let mut test_ty2 = test_tv.clone();
-        
+
         let result = t.unify(&mut test_ty1, &mut test_ty2);
         assert!(result.is_ok());
     }
@@ -761,12 +840,17 @@ fn generalize_1() {
     {
         let test_ty1 = Type::Func {
             args: vec![test_tv.clone(), Type::Bool],
-            ret: Box::new(Type::Int)
+            ret: Box::new(Type::Int),
         };
-        
+
         t.unify(&mut test_tv.clone(), &mut Type::Bool).ok();
         let res = t.generalize(&test_ty1);
-        assert_eq!(res, Type::Func { args: vec![Type::Bool, Type::Bool], ret: Box::new(Type::Int) });
+        assert_eq!(
+            res,
+            Type::Func {
+                args: vec![Type::Bool, Type::Bool],
+                ret: Box::new(Type::Int)
+            }
+        );
     }
 }
-

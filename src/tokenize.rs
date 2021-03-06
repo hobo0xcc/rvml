@@ -1,8 +1,8 @@
 use combine::parser::char::*;
-use combine::*;
 use combine::stream::position;
-use std::{process, unimplemented};
+use combine::*;
 use std::fmt;
+use std::{process, unimplemented};
 
 #[derive(Debug, Clone, PartialEq)]
 pub enum Token {
@@ -55,12 +55,8 @@ impl fmt::Display for Token {
 impl Token {
     pub fn get_string(&self) -> String {
         match *self {
-            Token::Ident(ref s) => {
-                s.to_string()
-            },
-            Token::Op(ref s) => {
-                s.to_string()
-            },
+            Token::Ident(ref s) => s.to_string(),
+            Token::Op(ref s) => s.to_string(),
             _ => unimplemented!(),
         }
     }

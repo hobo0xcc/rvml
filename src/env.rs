@@ -1,16 +1,22 @@
-use std::{collections::HashMap, hash::Hash};
-use std::rc::Rc;
 use std::cell::RefCell;
+use std::rc::Rc;
+use std::{collections::HashMap, hash::Hash};
 
 #[derive(Debug, Clone, PartialEq)]
 pub struct Environment<K, T>
-where T: Clone, K: Hash + Eq + Clone {
+where
+    T: Clone,
+    K: Hash + Eq + Clone,
+{
     curr: HashMap<K, T>,
     parent: Option<Rc<RefCell<Environment<K, T>>>>,
 }
 
 impl<K, T> Environment<K, T>
-where T: Clone, K: Hash + Eq + Clone {
+where
+    T: Clone,
+    K: Hash + Eq + Clone,
+{
     pub fn new() -> Environment<K, T> {
         Environment {
             curr: HashMap::new(),
@@ -74,8 +80,10 @@ pub struct DeBruijn<T> {
     prev: Option<Rc<DeBruijn<T>>>,
 }
 
-impl<T> DeBruijn<T> 
-where T: Clone {
+impl<T> DeBruijn<T>
+where
+    T: Clone,
+{
     pub fn new() -> DeBruijn<T> {
         DeBruijn {
             item: None,
@@ -92,19 +100,20 @@ where T: Clone {
 
     pub fn get_item(self) -> Option<T> {
         match self.item {
-            Some(ref rc) => {
-                Some((*(rc.clone())).clone())
-            },
+            Some(ref rc) => Some((*(rc.clone())).clone()),
             None => None,
         }
     }
 }
 
 impl<A, B> DeBruijn<(A, B)>
-where A: PartialEq + Clone, B: Clone {
+where
+    A: PartialEq + Clone,
+    B: Clone,
+{
     pub fn assoc(&self, a: A) -> Option<B> {
         match self.item {
-            Some(_) => {},
+            Some(_) => {}
             None => return None,
         };
         let i = &self.item;
@@ -113,14 +122,12 @@ where A: PartialEq + Clone, B: Clone {
                 if (*item).0 == a {
                     return Some(item.1.clone());
                 }
-            },
+            }
             None => unreachable!(),
         }
 
         match self.prev {
-            Some(ref p) => {
-                return p.assoc(a)
-            },
+            Some(ref p) => return p.assoc(a),
             None => return None,
         }
     }

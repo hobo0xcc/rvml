@@ -1,7 +1,7 @@
 use crate::closure::*;
 use crate::typing::{Subst, Type, TypeVar};
-use std::collections::HashMap;
 use rpds::HashTrieSet;
+use std::collections::HashMap;
 
 // Monomorphization
 pub struct Mono {
@@ -77,17 +77,18 @@ impl Mono {
                 let new_name = if self.func_map.contains_key(name) {
                     let new_subst = self.synthesize_subst(subst, subst_var);
                     let (func_name, ty) = self.duplicate(&new_subst, name);
-                    self.dups.entry(name.to_string()).or_insert_with(|| vec![]).push((func_name.clone(), ty));
+                    self.dups
+                        .entry(name.to_string())
+                        .or_insert_with(|| vec![])
+                        .push((func_name.clone(), ty));
                     func_name
                 } else {
                     name.to_string()
                 };
 
                 CNode::VarExpr(new_name, new_ty, subst_var.clone(), *is_extern)
-            },
-            CNode::Not(ref expr) => {
-                CNode::Not(Box::new(self.apply_subst_node(subst, &**expr)))
-            },
+            }
+            CNode::Not(ref expr) => CNode::Not(Box::new(self.apply_subst_node(subst, &**expr))),
             CNode::Tuple(ref nds, ref ty) => {
                 let new_ty = self.apply_subst_type(subst, ty);
                 let mut new_nds = Vec::new();
@@ -96,7 +97,7 @@ impl Mono {
                 }
 
                 CNode::Tuple(new_nds, new_ty)
-            },
+            }
             CNode::Expr {
                 ref lhs,
                 ref op,
@@ -113,7 +114,7 @@ impl Mono {
                     rhs: Box::new(new_rhs),
                     ty: new_ty,
                 }
-            },
+            }
             CNode::IfExpr {
                 ref cond,
                 ref then_body,
@@ -131,7 +132,7 @@ impl Mono {
                     else_body: Box::new(new_else_body),
                     ty: new_ty,
                 }
-            },
+            }
             CNode::LetExpr {
                 ref name,
                 ref first_expr,
@@ -150,7 +151,7 @@ impl Mono {
                     second_expr: Box::new(new_second_expr),
                     ty: new_ty,
                 }
-            },
+            }
             CNode::LetTupleExpr {
                 ref names,
                 ref first_expr,
@@ -174,7 +175,7 @@ impl Mono {
                     tuple_ty: new_tuple_ty,
                     ty: new_ty,
                 }
-            },
+            }
             CNode::MakeCls {
                 ref name,
                 dups: ref _dups,
@@ -201,9 +202,13 @@ impl Mono {
                     let new_ty = self.apply_subst_type(subst, ty);
                     (new_name_id, new_name_ty, new_ty)
                 } else {
-                    (id.to_string(), id_ty.clone(), self.apply_subst_type(subst, ty))
+                    (
+                        id.to_string(),
+                        id_ty.clone(),
+                        self.apply_subst_type(subst, ty),
+                    )
                 };
-                
+
                 CNode::MakeCls {
                     name: (new_name_id, new_name_ty),
                     dups: Some(new_dups),
@@ -211,7 +216,7 @@ impl Mono {
                     second_expr: Box::new(new_second_expr),
                     ty: new_ty,
                 }
-            },
+            }
             CNode::AppCls {
                 ref func,
                 ref args,
@@ -232,7 +237,7 @@ impl Mono {
                     func_ty: new_func_ty,
                     ty: new_ty,
                 }
-            },
+            }
             CNode::AppDir {
                 ref func,
                 ref args,
@@ -253,7 +258,7 @@ impl Mono {
                     func_ty: new_func_ty,
                     ty: new_ty,
                 }
-            },
+            }
             _ => node.clone(),
         }
     }
@@ -267,11 +272,8 @@ impl Mono {
                 }
 
                 Type::Tuple(new_types)
-            },
-            Type::Func {
-                ref args,
-                ref ret,
-            } => {
+            }
+            Type::Func { ref args, ref ret } => {
                 let mut new_args = Vec::new();
                 for arg in args.iter() {
                     new_args.push(self.apply_subst_type(subst, arg));
@@ -282,20 +284,13 @@ impl Mono {
                     args: new_args,
                     ret: Box::new(new_ret),
                 }
-            },
-            Type::QVar(ref id) => {
-                println!("qvar: {}", subst);
-                self.apply_subst_type(subst, subst.get(id).unwrap())
-            },
-            Type::TVar(ref tv) => {
-                match tv.get() {
-                    TypeVar::Unbound(id, _) => {
-                        self.apply_subst_type(subst, subst.get(&id).unwrap())
-                    },
-                    _ => unreachable!(),
-                }
             }
-            _ => ty.clone()
+            Type::QVar(ref id) => self.apply_subst_type(subst, subst.get(id).unwrap()),
+            Type::TVar(ref tv) => match tv.get() {
+                TypeVar::Unbound(id, _) => self.apply_subst_type(subst, subst.get(&id).unwrap()),
+                _ => unreachable!(),
+            },
+            _ => ty.clone(),
         }
     }
 
