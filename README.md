@@ -27,7 +27,7 @@ USAGE:
     rvml [FLAGS] [OPTIONS] [INPUT]
 
 FLAGS:
-        --repl         repl
+        --ast          Print AST
     -t, --show-type    show type
     -h, --help         Prints help information
     -V, --version      Prints version information
@@ -59,6 +59,13 @@ $ cargo run examples/poly1.ml -o main.o
 $ gcc -o main main.o
 $ ./main
 $ echo $?    # This should put 42.
+```
+
+To use primitive functions, you'll need to link generated object file with `lib/lib.c`.
+
+```
+$ gcc -c -o lib.o lib/lib.c
+$ gcc -o main main.o lib.o
 ```
 
 ## Examples
