@@ -89,6 +89,7 @@ impl Mono {
                 CNode::VarExpr(new_name, new_ty, subst_var.clone(), *is_extern)
             }
             CNode::Not(ref expr) => CNode::Not(Box::new(self.apply_subst_node(subst, &**expr))),
+            CNode::Neg(ref expr) => CNode::Neg(Box::new(self.apply_subst_node(subst, &**expr))),
             CNode::Tuple(ref nds, ref ty) => {
                 let new_ty = self.apply_subst_type(subst, ty);
                 let mut new_nds = Vec::new();

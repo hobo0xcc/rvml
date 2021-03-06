@@ -10,6 +10,7 @@ pub enum CNode {
     Bool(bool),
     VarExpr(String, Type, Subst, bool),
     Not(Box<CNode>),
+    Neg(Box<CNode>),
     Tuple(Vec<CNode>, Type),
     Expr {
         lhs: Box<CNode>,
@@ -67,6 +68,7 @@ impl CNode {
             Bool(_) => Type::Bool,
             VarExpr(_, ref ty, _, _) => ty.clone(),
             Not(_) => Type::Bool,
+            Neg(_) => Type::Int,
             Tuple(_, ref ty) => ty.clone(),
             Expr {
                 lhs: _,
@@ -190,6 +192,7 @@ impl Closure {
                 Known::new().insert(name.to_string())
             }
             CNode::Not(ref expr) => self.fv(&**expr),
+            CNode::Neg(ref expr) => self.fv(&**expr),
             CNode::Tuple(ref nds, ref _ty) => {
                 let mut fvs = Known::new();
                 for nd in nds.iter() {
@@ -304,6 +307,7 @@ impl Closure {
                 CNode::VarExpr(name.to_string(), ty.clone(), Subst::new(), true)
             }
             Not(ref expr) => CNode::Not(Box::new(self.closure(env, known, &**expr))),
+            Neg(ref expr) => CNode::Neg(Box::new(self.closure(env, known, &**expr))),
             Tuple(ref nds, ref ty) => {
                 let mut new_nds = Vec::new();
                 for nd in nds.iter() {

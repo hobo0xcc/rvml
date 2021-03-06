@@ -10,6 +10,7 @@ pub enum Node {
     Bool(bool),
     VarExpr(String),
     Not(Box<Node>),
+    Neg(Box<Node>),
     Tuple(Vector<Node>),
     Expr {
         lhs: Box<Node>,
@@ -103,7 +104,8 @@ impl Parser {
 
     pub fn prefix_bp(&self, op: &str) -> ((), usize) {
         match op {
-            "not" => ((), 9),
+            "not" => ((), 17),
+            "-" => ((), 15),
             "if" => ((), 5),
             "let" => ((), 1),
             _ => {
@@ -236,6 +238,10 @@ impl Parser {
                 let rhs = self.expr(r_bp);
                 match op.as_str() {
                     "not" => Node::Not(Box::new(rhs)),
+                    "-" => match rhs {
+                        Node::Float(f) => Node::Float(-f),
+                        _ => Node::Neg(Box::new(rhs)),
+                    },
                     _ => unreachable!(),
                 }
             }

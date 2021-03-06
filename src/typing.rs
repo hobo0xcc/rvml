@@ -102,6 +102,7 @@ pub enum TypedNode {
     VarExpr(String, Type, Subst),
     VarExtExpr(String, Type),
     Not(Box<TypedNode>),
+    Neg(Box<TypedNode>),
     Tuple(Vec<TypedNode>, Type),
     Expr {
         lhs: Box<TypedNode>,
@@ -390,6 +391,12 @@ impl Typing {
                 let result_ty = Type::Bool;
                 Ok((TypedNode::Not(Box::new(expr_nd)), result_ty))
             }
+            Node::Neg(ref expr) => {
+                let (expr_nd, mut expr_ty) = self.typing(env.clone(), &*expr)?;
+                self.unify(&mut expr_ty, &mut Type::Int)?;
+                let result_ty = Type::Int;
+                Ok((TypedNode::Neg(Box::new(expr_nd)), result_ty))
+            }
             Node::Tuple(ref exprs) => {
                 let mut typed_exprs = Vec::new();
                 let mut types = Vec::new();
@@ -652,6 +659,9 @@ impl Typing {
                 *ty = self.deref_ty(ty);
             }
             TypedNode::Not(ref mut expr) => {
+                self.deref_node(&mut **expr);
+            }
+            TypedNode::Neg(ref mut expr) => {
                 self.deref_node(&mut **expr);
             }
             TypedNode::Tuple(ref mut tynds, ref mut ty) => {

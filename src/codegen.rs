@@ -391,6 +391,11 @@ impl<'ctx> CodeGen<'ctx> {
                 let res = self.builder.build_not(expr_val.into_int_value(), "tmp");
                 IntValue(res)
             }
+            Neg(ref expr) => {
+                let expr_val = self.codegen(expr, env);
+                let res = self.builder.build_int_neg(expr_val.into_int_value(), "tmp");
+                IntValue(res)
+            }
             Tuple(ref exprs, ref ty) => {
                 let mut values = Vec::new();
                 for expr in exprs.iter() {

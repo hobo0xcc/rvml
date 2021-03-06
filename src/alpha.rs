@@ -39,6 +39,7 @@ impl Alpha {
             }
             VarExtExpr(ref mut _name, ref _ty) => {}
             Not(ref mut expr) => self.alpha(env, expr),
+            Neg(ref mut expr) => self.alpha(env, expr),
             Tuple(ref mut nds, ref _ty) => {
                 for nd in nds.iter_mut() {
                     self.alpha(env.clone(), nd);
