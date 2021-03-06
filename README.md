@@ -96,6 +96,4 @@ let rec f x = (x, x, x) in let (a, b, c) = f 3 in a + b + c
 
 ## Todo
 
-- [x] Support nested function
-- [ ] Add float type and its operator
-- [ ] Call external function
+- [ ] Compile min-caml raytracer
