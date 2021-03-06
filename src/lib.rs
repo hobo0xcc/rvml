@@ -3,7 +3,6 @@ pub mod parse;
 pub mod typing;
 pub mod alpha;
 pub mod closure;
-pub mod eval;
+pub mod mono;
 pub mod codegen;
 pub mod env;
-pub mod test;

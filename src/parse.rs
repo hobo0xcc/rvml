@@ -1,14 +1,16 @@
 use super::tokenize::*;
-use combine::error::ParseError;
-use combine::*;
+use rpds::Vector;
+use std::process;
 
 #[derive(Debug, Clone, PartialEq)]
 pub enum Node {
+    Unit,
     Int(i32),
+    Float(f32),
     Bool(bool),
     VarExpr(String),
     Not(Box<Node>),
-    Tuple(Vec<Node>),
+    Tuple(Vector<Node>),
     Expr {
         lhs: Box<Node>,
         op: String,
@@ -25,473 +27,392 @@ pub enum Node {
         second_expr: Box<Node>,
     },
     LetTupleExpr {
-        names: Vec<String>,
+        names: Vector<String>,
         first_expr: Box<Node>,
         second_expr: Box<Node>,
     },
     LetRecExpr {
         name: String,
-        args: Vec<String>,
+        args: Vector<String>,
         first_expr: Box<Node>,
         second_expr: Box<Node>,
     },
     App {
         func: Box<Node>,
-        args: Vec<Node>,
+        args: Vector<Node>,
     },
 }
 
-parser! {
-    fn primary_expr[Input]()(Input) -> Node
-    where [
-        Input: Stream<Token = Token>,
-        Input::Error: ParseError<char, Input::Range, Input::Position>,
-    ] {
-        choice((
-            between(token(Token::LParen), token(Token::RParen), expr()),
-            token(Token::True).map(|_| Node::Bool(true)),
-            token(Token::False).map(|_| Node::Bool(false)),
-            satisfy(|tok| match tok { Token::Ident(_) => true, _ => false })
-                .map(|tok| match tok { Token::Ident(s) => Node::VarExpr(s), _ => unreachable!() }),
-            satisfy(|tok| {
-                match tok {
-                    Token::Num(_) => true,
-                    _ => false,
-                }
-            }).map(|tok| {
-                match tok {
-                    Token::Num(n) => Node::Int(n),
-                    _ => unreachable!()
-                }
-            })
-        ))
-    }
+pub struct Parser {
+    tokens: Vec<Token>,
+    curr: usize,
 }
 
-parser! {
-    fn unary_expr[Input]()(Input) -> Node
-    where [
-        Input: Stream<Token = Token>,
-        Input::Error: ParseError<char, Input::Range, Input::Position>,
-    ] {
-        choice((
-            primary_expr(),
-            (
-                token(Token::Not),
-                unary_expr(),
-            ).map(|t| Node::Not(Box::new(t.1))),
-        ))
+impl Parser {
+    pub fn new(tokens: Vec<Token>) -> Parser {
+        Parser {
+            tokens,
+            curr: 0,
+        }
     }
-}
 
-parser! {
-    fn mul_expr[Input]()(Input) -> Node
-    where [
-        Input: Stream<Token = Token>,
-        Input::Error: ParseError<char, Input::Range, Input::Position>,
-    ] {
-        (
-            unary_expr(),
-            optional(many1::<Vec<(Token, Node)>, _, _>((
-                choice((
-                    token(Token::Op("*".to_string())), token(Token::Op("/".to_string()))
-                )), unary_expr()
-            )))
-        ).map(|expr| {
-            let mut left = expr.0;
-            if let Some(x) = expr.1 {
-                for (op_tok, node) in x.into_iter() {
-                    let op = match op_tok {
-                        Token::Op(s) => s,
-                        _ => unreachable!()
-                    };
-                    left = Node::Expr {
-                        lhs: Box::new(left),
-                        op,
-                        rhs: Box::new(node),
-                    };
-                }
+    pub fn peek(&self, offset: usize) -> Token {
+        match self.tokens.get(self.curr + offset) {
+            Some(tok) => tok.clone(),
+            None => Token::Eof,
+        }
+    }
+
+    pub fn curr(&self) -> Token {
+        self.peek(0)
+    }
+
+    pub fn read(&mut self) -> Token {
+        let curr_tok = self.curr();
+
+        self.curr += 1;
+        curr_tok
+    }
+
+    pub fn read_if<F: Fn(&Token) -> bool>(&mut self, f: F) -> Option<Token> {
+        let curr_tok = self.curr();
+        if f(&curr_tok) {
+            self.next();
+            Some(curr_tok)
+        } else {
+            None
+        }
+    }
+
+    pub fn next(&mut self) {
+        let _ = self.read();
+    }
+
+    pub fn expect(&mut self, exp_tok: &Token) {
+        let curr_tok = self.read();
+        if curr_tok != *exp_tok {
+            println!("Error: Expected {}, found {}", exp_tok, curr_tok);
+            process::exit(1);
+        }
+    }
+
+    pub fn expect_fn<F: Fn(&Token) -> bool>(&mut self, f: F) {
+        let curr_tok = self.read();
+        if !f(&curr_tok) {
+            println!("Error: Unexpected token: {}", curr_tok);
+            process::exit(1);
+        }
+    }
+
+    pub fn prefix_bp(&self, op: &str) -> ((), usize) {
+        match op {
+            "not" => ((), 9),
+            "if" => ((), 5),
+            "let" => ((), 1),
+            _ => {
+                println!("Bad op: {}", op);
+                process::exit(1);
             }
-            return left;
-        })
+        }
     }
-}
 
-parser! {
-    fn add_expr[Input]()(Input) -> Node
-    where [
-        Input: Stream<Token = Token>,
-        Input::Error: ParseError<char, Input::Range, Input::Position>,
-    ] {
-        (
-            mul_expr(),
-            optional(many1::<Vec<(Token, Node)>, _, _>((
-                choice((
-                    token(Token::Op("+".to_string())), token(Token::Op("-".to_string()))
-                )), mul_expr()
-            )))
-        ).map(|expr| {
-            let mut left = expr.0;
-            if let Some(x) = expr.1 {
-                for (op_tok, node) in x.into_iter() {
-                    let op = match op_tok {
-                        Token::Op(s) => s,
-                        _ => unreachable!()
-                    };
-                    left = Node::Expr {
-                        lhs: Box::new(left),
-                        op,
-                        rhs: Box::new(node),
-                    };
-                }
+    pub fn infix_bp(&self, op: &str) -> Option<(usize, usize)> {
+        let res = match op {
+            ";" => (4, 3),
+            "," => (7, 8),
+            "<" | ">" | "<=" | ">=" | "=" | "<>" => (9, 10),
+            "+" | "-" | "+." | "-." => (11, 12),
+            "*" | "/" | "*." | "/." => (13, 14),
+            _ => return None,
+        };
+        Some(res)
+    }
+
+    pub fn postfix_bp(&self, _op: &str) -> Option<(usize, ())> {
+        None
+        // let res = match op {
+        //     _ => return None,
+        // };
+
+        // res
+    }
+
+    pub fn formal_args(&mut self) -> Vector<String> {
+        let is_ident = |tok: &Token| match *tok { Token::Ident(_) => true, _ => false };
+        let mut args = Vector::new();
+        while let Some(tok) = self.read_if(is_ident) {
+            let name = match tok {
+                Token::Ident(s) => s,
+                _ => unreachable!(),
+            };
+            args = args.push_back(name);
+        }
+
+        if args.len() == 0 {
+            println!("Expected args, found {}", self.curr());
+            process::exit(1);
+        }
+
+        args
+    }
+
+    pub fn actual_args(&mut self) -> Option<Vector<Node>> {
+        let mut args = Vector::new();
+        while let Some(nd) = self.simple_expr() {
+            args = args.push_back(nd);
+        }
+
+        if args.len() == 0 {
+            return None;
+        }
+
+        Some(args)
+    }
+
+    pub fn tuple_ids(&mut self) -> Vector<String> {
+        self.expect(&Token::LParen);
+        let is_ident = |tok: &Token| match *tok { Token::Ident(_) => true, _ => false };
+        let mut ids = Vector::new();
+        while let Some(tok) = self.read_if(is_ident) {
+            let name = match tok {
+                Token::Ident(s) => s,
+                _ => unreachable!(),
+            };
+            ids = ids.push_back(name);
+            match self.curr() {
+                Token::Comma => {
+                    self.next();
+                },
+                _ => break,
             }
-            return left;
-        })
-    }
-}
+        }
 
-parser! {
-    fn relational_expr[Input]()(Input) -> Node
-    where [
-        Input: Stream<Token = Token>,
-        Input::Error: ParseError<char, Input::Range, Input::Position>,
-    ] {
-        (
-            add_expr(),
-            optional(many1::<Vec<(Token, Node)>, _, _>((
-                choice((
-                    token(Token::Op("<".to_string())), token(Token::Op("<=".to_string())),
-                    token(Token::Op(">".to_string())), token(Token::Op(">=".to_string())),
-                )), add_expr()
-            )))
-        ).map(|expr| {
-            let mut left = expr.0;
-            if let Some(x) = expr.1 {
-                for (op_tok, node) in x.into_iter() {
-                    let op = match op_tok {
-                        Token::Op(s) => s,
-                        _ => unreachable!()
-                    };
-                    match op.as_str() {
-                        "<" => {
-                            left = Node::Not(Box::new(Node::Expr {
-                                lhs: Box::new(node),
-                                op: String::from("<="),
-                                rhs: Box::new(left),
-                            }));
-                        },
-                        ">" => {
-                            left = Node::Not(Box::new(Node::Expr {
-                                lhs: Box::new(left),
-                                op: String::from("<="),
-                                rhs: Box::new(node),
-                            }));
-                        },
-                        "<=" => {
-                            left = Node::Expr {
-                                lhs: Box::new(left),
-                                op: String::from("<="),
-                                rhs: Box::new(node),
-                            };
-                        },
-                        ">=" => {
-                            left = Node::Expr {
-                                lhs: Box::new(node),
-                                op: String::from("<="),
-                                rhs: Box::new(left),
-                            };
-                        },
-                        _ => unreachable!(),
+        self.expect(&Token::RParen);
+
+        if ids.len() < 2 {
+            println!("Tuple size must be greater than 1");
+            process::exit(1);
+        }
+
+        ids
+    }
+
+    pub fn simple_expr(&mut self) -> Option<Node> {
+        let res = match self.curr() {
+            Token::Num(n) => Node::Int(n),
+            Token::Float(f) => Node::Float(f),
+            Token::Ident(name) => Node::VarExpr(name),
+            Token::True => Node::Bool(true),
+            Token::False => Node::Bool(false),
+            Token::LParen => {
+                self.next();
+                match self.curr() {
+                    Token::RParen => {
+                        self.next();
+                        return Some(Node::Unit);
+                    },
+                    _ => {
+                        let e = self.expr(0);
+                        self.expect(&Token::RParen);
+                        return Some(e)
                     }
                 }
-            }
-            return left;
-        })
-    }
-}
+            },
+            _ => return None,
+        };
 
-parser! {
-    fn equal_expr[Input]()(Input) -> Node
-    where [
-        Input: Stream<Token = Token>,
-        Input::Error: ParseError<char, Input::Range, Input::Position>,
-    ] {
-        (
-            relational_expr(),
-            optional(many1::<Vec<(Token, Node)>, _, _>((
-                choice((
-                    token(Token::Op("<>".to_string())),
-                    token(Token::Op("=".to_string()))
-                )),
-                relational_expr()
-            )))
-        ).map(|expr| {
-            let mut left = expr.0;
-            if let Some(x) = expr.1 {
-                for (op_tok, node) in x.into_iter() {
-                    let op = match op_tok {
-                        Token::Op(s) => s,
-                        _ => unreachable!()
-                    };
-                    match op.as_str() {
-                        "=" => {
-                            left = Node::Expr {
-                                lhs: Box::new(left),
-                                op: "=".to_string(),
-                                rhs: Box::new(node),
-                            };
-                        },
-                        "<>" => {
-                            left = Node::Not(Box::new(Node::Expr {
-                                lhs: Box::new(left),
-                                op: "=".to_string(),
-                                rhs: Box::new(node),
-                            }));
-                        },
-                        _ => unreachable!(),
-                    };
+        self.next();
+        Some(res)
+    }
+
+    pub fn expr(&mut self, bp: usize) -> Node {
+        let mut lhs = match self.curr() {
+            Token::Op(op) => {
+                self.next();
+                let ((), r_bp) = self.prefix_bp(&op);
+                let rhs = self.expr(r_bp);
+                match op.as_str() {
+                    "not" => Node::Not(Box::new(rhs)),
+                    _ => unreachable!()
                 }
+            },
+            Token::If => {
+                self.next();
+                let ((), r_bp) = self.prefix_bp("if");
+                let cond = self.expr(0);
+                self.expect(&Token::Then);
+                let e1 = self.expr(0);
+                self.expect(&Token::Else);
+                let e2 = self.expr(r_bp);
+
+                Node::IfExpr {
+                    cond: Box::new(cond),
+                    then_body: Box::new(e1),
+                    else_body: Box::new(e2),
+                }
+            },
+            Token::Let => {
+                self.next();
+                let ((), r_bp) = self.prefix_bp("let");
+                match self.curr() {
+                    Token::Rec => {
+                        self.next();
+                        let name = match self.read() {
+                            Token::Ident(name) => name,
+                            tok => {
+                                println!("Expected Ident, found {}", tok);
+                                process::exit(1);
+                            }
+                        };
+
+                        let args = self.formal_args();
+                        self.expect(&Token::Op("=".to_string()));
+                        let e1 = self.expr(0);
+                        self.expect(&Token::In);
+                        let e2 = self.expr(r_bp);
+
+                        return Node::LetRecExpr {
+                            name,
+                            args,
+                            first_expr: Box::new(e1),
+                            second_expr: Box::new(e2),
+                        };
+                    },
+                    Token::LParen => {
+                        let ids = self.tuple_ids();
+                        self.expect(&Token::Op("=".to_string()));
+                        let e1 = self.expr(0);
+                        self.expect(&Token::In);
+                        let e2 = self.expr(r_bp);
+
+                        return Node::LetTupleExpr {
+                            names: ids,
+                            first_expr: Box::new(e1),
+                            second_expr: Box::new(e2),
+                        };
+                    },
+                    _ => {
+                        let name = match self.read() {
+                            Token::Ident(s) => s,
+                            tok => {
+                                println!("Expected Ident, found {}", tok);
+                                process::exit(1);
+                            }
+                        };
+
+                        self.expect(&Token::Op("=".to_string()));
+                        let e1 = self.expr(0);
+                        self.expect(&Token::In);
+                        let e2 = self.expr(r_bp);
+
+                        return Node::LetExpr {
+                            name,
+                            first_expr: Box::new(e1),
+                            second_expr: Box::new(e2),
+                        };
+                    }
+                }
+            },
+            _ => {
+                match self.simple_expr() {
+                    Some(nd) => {
+                        if let Some(args) = self.actual_args() {
+                            Node::App {
+                                func: Box::new(nd),
+                                args,
+                            }
+                        } else {
+                            nd
+                        }
+                    },
+                    None => {
+                        println!("Bad token: {}", self.curr());
+                        process::exit(1);
+                    }
+                }
+            },
+        };
+
+        loop {
+            let op = match self.curr() {
+                Token::Eof => break,
+                Token::Then => break,
+                Token::Else => break,
+                Token::RParen => break,
+                Token::In => break,
+                Token::Op(op) => op,
+                Token::Comma => ",".to_string(),
+                Token::SemiColon => ";".to_string(),
+                tok => {
+                    println!("Bad token: {}", tok);
+                    process::exit(1);
+                }
+            };
+
+            if let Some((l_bp, ())) = self.postfix_bp(&op) {
+                if l_bp < bp {
+                    break;
+                }
+                self.next();
+
+                continue;
             }
-            return left;
-        })
-    }
-}
 
-parser! {
-    fn if_expr[Input]()(Input) -> Node
-    where [
-        Input: Stream<Token = Token>,
-        Input::Error: ParseError<char, Input::Range, Input::Position>,
-    ] {
-        (
-            token(Token::If),
-            expr(), // cond
-            token(Token::Then),
-            expr(), // then_body
-            token(Token::Else),
-            expr(), // else_body
-        ).map(|if_expr| {
-            Node::IfExpr {
-                cond: Box::new(if_expr.1),
-                then_body: Box::new(if_expr.3),
-                else_body: Box::new(if_expr.5),
-            }
-        })
-    }
-}
+            if let Some((l_bp, r_bp)) = self.infix_bp(&op) {
+                if l_bp < bp {
+                    break;
+                }
+                self.next();
 
-parser! {
-    fn ident[Input]()(Input) -> Token
-    where [
-        Input: Stream<Token = Token>,
-        Input::Error: ParseError<char, Input::Range, Input::Position>,
-    ] {
-        satisfy(|tok| match tok { Token::Ident(_) => true, _ => false })
-    }
-}
+                let rhs = self.expr(r_bp);
+                match op.as_str() {
+                    "," => {
+                        let elems = match lhs {
+                            Node::Tuple(ref old_elems) => {
+                                old_elems.push_back(rhs)
+                            },
+                            _ => {
+                                let mut new_elems = Vector::new();
+                                new_elems = new_elems.push_back(lhs);
+                                new_elems.push_back(rhs)
+                            }
+                        };
+                        lhs = Node::Tuple(elems);
+                    },
+                    ";" => {
+                        lhs = Node::LetExpr {
+                            name: "_".to_string(),
+                            first_expr: Box::new(lhs),
+                            second_expr: Box::new(rhs),
+                        };
+                    },
+                    _ => {
+                        lhs = Node::Expr {
+                            lhs: Box::new(lhs),
+                            op: op.to_string(),
+                            rhs: Box::new(rhs),
+                        };
+                    }
+                }
 
-parser! {
-    fn let_expr[Input]()(Input) -> Node
-    where [
-        Input: Stream<Token = Token>,
-        Input::Error: ParseError<char, Input::Range, Input::Position>,
-    ] {
-        (
-            token(Token::Let),
-            ident(),
-            token(Token::Op("=".to_string())),
-            expr(),
-            token(Token::In),
-            expr(),
-        ).map(|let_expr| {
-            let name = match let_expr.1 { Token::Ident(s) => s, _ => unreachable!() };
-            Node::LetExpr {
-                name,
-                first_expr: Box::new(let_expr.3),
-                second_expr: Box::new(let_expr.5),
-            }
-        })
-    }
-}
-
-parser! {
-    fn tuple_ids[Input]()(Input) -> Vec<String>
-    where [
-        Input: Stream<Token = Token>,
-        Input::Error: ParseError<char, Input::Range, Input::Position>,
-    ] {
-        (
-            ident(),
-            token(Token::Comma)
-            .with(ident()),
-            optional(many1::<Vec<Token>, _, _>(token(Token::Comma).with(ident()))),
-        ).map(|(id1, id2, ids)| {
-            let mut id_vec = Vec::new();
-            id_vec.push(id1.get_string());
-            id_vec.push(id2.get_string());
-            if let Some(ids) = ids {
-                id_vec.extend(ids.into_iter().map(|t| t.get_string()));
+                continue;
             }
 
-            id_vec
-        })
-    }
-}
+            break;
+        }
 
-parser! {
-    fn lettuple_expr[Input]()(Input) -> Node
-    where [
-        Input: Stream<Token = Token>,
-        Input::Error: ParseError<char, Input::Range, Input::Position>,
-    ] {
-        (
-            token(Token::Let),
-            between(token(Token::LParen), token(Token::RParen), tuple_ids()),
-            token(Token::Op("=".to_string())),
-            expr(),
-            token(Token::In),
-            expr(),
-        ).map(|let_expr| {
-            let names = let_expr.1;
-            Node::LetTupleExpr {
-                names,
-                first_expr: Box::new(let_expr.3),
-                second_expr: Box::new(let_expr.5),
-            }
-        })
-    }
-}
-
-parser! {
-    fn formal_args[Input]()(Input) -> Vec<String>
-    where [
-        Input: Stream<Token = Token>,
-        Input::Error: ParseError<char, Input::Range, Input::Position>,
-    ] {
-        many1::<Vec<String>, _, _>(ident().map(|tok| match tok { Token::Ident(s) => s, _ => unreachable!() }))
-    }
-}
-
-parser! {
-    fn func_def[Input]()(Input) -> (String, Vec<String>, Node)
-    where [
-        Input: Stream<Token = Token>,
-        Input::Error: ParseError<char, Input::Range, Input::Position>,
-    ] {
-        (
-            ident(),
-            formal_args(),
-            token(Token::Op("=".to_string())),
-            expr(),
-        ).map(|t| {
-            let name = match t.0 { Token::Ident(s) => s, _ => unreachable!() };
-            (name, t.1, t.3)
-        })
-    }
-}
-
-parser! {
-    fn letrec_expr[Input]()(Input) -> Node
-    where [
-        Input: Stream<Token = Token>,
-        Input::Error: ParseError<char, Input::Range, Input::Position>,
-    ] {
-        (
-            token(Token::Let),
-            token(Token::Rec),
-            func_def(),
-            token(Token::In),
-            expr(),
-        ).map(|t| {
-            let name = t.2.0;
-            let args_ = t.2.1;
-            let mut args: Vec<String> = Vec::new();
-            for name in args_.into_iter() {
-                args.push(name);
-            }
-            let first_expr = t.2.2;
-            Node::LetRecExpr {
-                name,
-                args,
-                first_expr: Box::new(first_expr),
-                second_expr: Box::new(t.4),
-            }
-        })
-    }
-}
-
-parser! {
-    fn actual_arg[Input]()(Input) -> Vec<Node>
-    where [
-        Input: Stream<Token = Token>,
-        Input::Error: ParseError<char, Input::Range, Input::Position>,
-    ] {
-        many1::<Vec<Node>, _, _>(primary_expr())
-    }
-}
-
-parser! {
-    fn app_expr[Input]()(Input) -> Node
-    where [
-        Input: Stream<Token = Token>,
-        Input::Error: ParseError<char, Input::Range, Input::Position>,
-    ] {
-        (
-            primary_expr(),
-            actual_arg(),
-        ).map(|t| {
-            Node::App {
-                func: Box::new(t.0),
-                args: t.1,
-            }
-        })
-    }
-}
-
-parser! {
-    fn tuple_expr[Input]()(Input) -> Node
-    where [
-        Input: Stream<Token = Token>,
-        Input::Error: ParseError<char, Input::Range, Input::Position>,
-    ] {
-        (
-            token(Token::LParen),
-            expr(),
-            token(Token::Comma),
-            expr(),
-            optional(many1::<Vec<Node>, _, _>((token(Token::Comma), expr()).map(|t| t.1))),
-            token(Token::RParen),
-        ).map(|(_, e1, _, e2, es, _)| {
-            let mut tuple_vec = Vec::new();
-            tuple_vec.push(e1);
-            tuple_vec.push(e2);
-            if let Some(es) = es {
-                tuple_vec.extend(es);
-            }
-            Node::Tuple(tuple_vec)
-        })
-    }
-}
-
-parser! {
-    fn expr[Input]()(Input) -> Node
-    where [
-        Input: Stream<Token = Token>,
-        Input::Error: ParseError<char, Input::Range, Input::Position>,
-    ] {
-        choice((
-            attempt(app_expr()),
-            attempt(tuple_expr()),
-            attempt(equal_expr()),
-            attempt(if_expr()),
-            attempt(lettuple_expr()),
-            attempt(let_expr()),
-            attempt(letrec_expr()),
-        ))
+        lhs
     }
 }
 
 pub fn parse(tokens: Vec<Token>) -> Node {
-    let mut parser = expr();
-    parser.parse(&tokens[..]).unwrap().0
+    println!("Parse");
+    let mut parser = Parser::new(tokens);
+    parser.expr(0)
+}
+
+#[test]
+fn parse_test1() {
+    let node = parse(tokenize("1"));
+    assert_eq!(node, Node::Int(1));
 }

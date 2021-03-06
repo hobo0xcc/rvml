@@ -1,6 +1,7 @@
 use crate::parse::Node;
 use crate::env::DeBruijn;
-use std::{cmp::min, rc::Rc, unreachable};
+use rpds::HashTrieMap;
+use std::{cmp::min, rc::Rc};
 use std::cell::Cell;
 use std::collections::HashMap;
 use std::process;
@@ -14,7 +15,9 @@ pub enum TypeVar {
 
 #[derive(Debug, Clone, PartialEq)]
 pub enum Type {
+    Unit,
     Int,
+    Float,
     Bool,
     Tuple(Vec<Type>),
     Func {
@@ -25,10 +28,42 @@ pub enum Type {
     QVar(usize), // Quantified type variable
 }
 
+impl Type {
+    pub fn to_string(&self) -> String {
+        match *self {
+            Type::Unit => "unit".to_string(),
+            Type::Int => "int".to_string(),
+            Type::Float => "float".to_string(),
+            Type::Bool => "bool".to_string(),
+            Type::Tuple(ref types) => {
+                let mut ty_name = types.get(0).unwrap().to_string();
+                for ty in types.iter().skip(1) {
+                    ty_name = format!("{}_{}", ty_name, ty.to_string());
+                }
+                ty_name
+            },
+            Type::Func {
+                ref args,
+                ref ret,
+            } => {
+                let mut ty_name = args.get(0).unwrap().to_string();
+                for ty in args.iter().skip(1) {
+                    ty_name = format!("{}_{}", ty_name, ty.to_string());
+                }
+                ty_name = format!("{}_{}", ty_name, (&**ret).to_string());
+                ty_name
+            },
+            Type::TVar(_) | Type::QVar(_) => "var".to_string(),
+        }
+    }
+}
+
 impl fmt::Display for Type {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         match *self {
+            Type::Unit => write!(f, "unit"),
             Type::Int => write!(f, "int"),
+            Type::Float => write!(f, "float"),
             Type::Bool => write!(f, "bool"),
             Type::Tuple(ref t) => {
                 for (i, ty) in t.iter().enumerate() {
@@ -42,10 +77,12 @@ impl fmt::Display for Type {
                 Ok(())
             },
             Type::Func { ref args, ref ret } => {
+                write!(f, "(")?;
                 for a in args.iter() {
                     write!(f, "{} -> ", a)?;
                 }
-                write!(f, "{}", **ret)
+                write!(f, "{}", **ret)?;
+                write!(f, ")")
             },
             Type::TVar(ref tv) => {
                 match tv.get() {
@@ -66,9 +103,12 @@ impl fmt::Display for Type {
 
 #[derive(Clone, Debug, PartialEq)]
 pub enum TypedNode {
+    Unit,
     Int(i32),
+    Float(f32),
     Bool(bool),
-    VarExpr(String, Type),
+    VarExpr(String, Type, Subst),
+    VarExtExpr(String, Type),
     Not(Box<TypedNode>),
     Tuple(Vec<TypedNode>, Type),
     Expr {
@@ -112,7 +152,7 @@ pub enum TypedNode {
 }
 
 type Env = DeBruijn<(String, Type)>;
-type Subst = DeBruijn<(Id, Type)>;
+pub type Subst = HashTrieMap<Id, Type>; // DeBruijn<(Id, Type)>;
 type Id = usize;
 
 #[derive(Debug, Clone)]
@@ -169,6 +209,7 @@ impl Typing {
         match *ty1 {
             Type::TVar(ref mut tvr2) => {
                 if *tvr1 == Rc::clone(tvr2).get() {
+                    println!("{:?} : {:?}", tvr1, tvr2.get());
                     return true;
                 }
 
@@ -207,7 +248,8 @@ impl Typing {
                 match Rc::clone(&tv).get() {
                     TypeVar::Unbound(ref id, ref _level) => {
                         if self.occurs_check(&Rc::clone(tv).get(), t_) {
-                            return Err(TypingError::OccursInside);
+                            panic!("occurs inside");
+                            // return Err(TypingError::OccursInside);
                         }
                         tv.set(self.link_typevar(*id, t_.clone()));
                     },
@@ -234,7 +276,9 @@ impl Typing {
                     self.unify(ty1, ty2)?;
                 }
             },
-            _ => return Err(TypingError::TypeUnmatched),
+            _ => return {
+                Err(TypingError::TypeUnmatched)
+            }
         }
 
         return Ok(());
@@ -260,6 +304,9 @@ impl Typing {
                     ret: Box::new(self.generalize(&*ret_type)),
                 }
             },
+            Type::Tuple(ref types) => {
+                Type::Tuple(types.iter().map(|ty| self.generalize(ty)).collect())
+            },
             _ => ty.clone()
         }
     }
@@ -267,12 +314,12 @@ impl Typing {
     pub fn instantiate_loop(&mut self, subst: Subst, ty: &Type) -> (Type, Subst) {
         match *ty {
             Type::QVar(ref id) => {
-                let b = subst.assoc(*id);
+                let b = subst.get(id);
                 match b {
                     Some(ty) => (ty.clone(), subst),
                     None => {
                         let tv = self.new_typevar();
-                        (tv.clone(), subst.add((*id, tv)))
+                        (tv.clone(), subst.insert(*id, tv))
                     }
                 }
             },
@@ -316,21 +363,26 @@ impl Typing {
         }
     }
 
-    pub fn instantiate(&mut self, ty: &Type) -> Type {
-        self.instantiate_loop(Subst::new(), ty).0
+    pub fn instantiate(&mut self, ty: &Type) -> (Type, Subst) {
+        self.instantiate_loop(Subst::new(), ty)
     }
 
     pub fn typing(&mut self, env: Env, node: &Node) -> Result<(TypedNode, Type), TypingError> {
         match *node {
+            Node::Unit => Ok((TypedNode::Unit, Type::Unit)),
             Node::Int(ref n) => Ok((TypedNode::Int(*n), Type::Int)),
+            Node::Float(ref f) => Ok((TypedNode::Float(*f), Type::Float)),
             Node::Bool(ref b) => Ok((TypedNode::Bool(*b), Type::Bool)),
             Node::VarExpr(ref name) => {
                 match env.assoc(name.to_string()) {
                     Some(ty) => {
-                        let t = self.instantiate(&ty);
-                        Ok((TypedNode::VarExpr(name.to_string(), t.clone()), t))
+                        let (t, subst) = self.instantiate(&ty);
+                        Ok((TypedNode::VarExpr(name.to_string(), t.clone(), subst), t))
                     },
-                    None => Err(TypingError::UndefinedVar),
+                    None => {
+                        let ty = self.new_typevar();
+                        Ok((TypedNode::VarExtExpr(name.to_string(), ty.clone()), ty))
+                    }
                 }
             },
             Node::Not(ref expr) => {
@@ -362,8 +414,12 @@ impl Typing {
                 let (rhs_nd, mut rhs_ty) = self.typing(env.clone(), &*rhs)?;
                 let (mut operand_ty, mut expr_ty) = match op.as_str() {
                     "+" | "-" | "*" | "/" => (Type::Int, Type::Int),
-                    "<=" | "=" => (Type::Int, Type::Bool),
-                    _ => unreachable!(),
+                    "+." | "-." | "*." | "/." => (Type::Float, Type::Float),
+                    "<" | ">" | "<=" | ">=" | "<>" | "=" => (self.new_typevar(), Type::Bool),
+                    _ => {
+                        println!("Unknown op: {}", op);
+                        process::exit(1);
+                    },
                 };
                 self.unify(&mut lhs_ty, &mut operand_ty)?;
                 self.unify(&mut rhs_ty, &mut operand_ty)?;
@@ -499,7 +555,9 @@ impl Typing {
 
     pub fn deref_ty(&self, ty: &Type) -> Type {
         match *ty {
+            Type::Unit => Type::Unit,
             Type::Int => Type::Int,
+            Type::Float => Type::Float,
             Type::Bool => Type::Bool,
             Type::Tuple(ref tys) => {
                 let mut new_tys = Vec::new();
@@ -530,9 +588,18 @@ impl Typing {
 
     pub fn deref_node(&self, node: &mut TypedNode) {
         match *node {
+            TypedNode::Unit => {},
             TypedNode::Int(_) => {},
+            TypedNode::Float(_) => {},
             TypedNode::Bool(_) => {},
-            TypedNode::VarExpr(_, ref mut ty) => {
+            TypedNode::VarExpr(_, ref mut ty, ref mut subst) => {
+                *ty = self.deref_ty(ty);
+                let subst_cl = subst.clone();
+                for (key, val) in subst_cl.iter() {
+                    subst.insert_mut(key.clone(), self.deref_ty(val));
+                }
+            },
+            TypedNode::VarExtExpr(_, ref mut ty) => {
                 *ty = self.deref_ty(ty);
             },
             TypedNode::Not(ref mut expr) => {
@@ -555,7 +622,9 @@ impl Typing {
                 self.deref_node(&mut **then_body);
                 self.deref_node(&mut **else_body);
             },
-            TypedNode::LetExpr { name: _, ref mut first_expr, ref mut second_expr, ref mut ty } => {
+            TypedNode::LetExpr { ref mut name, ref mut first_expr, ref mut second_expr, ref mut ty } => {
+                let (_, ref mut name_ty) = name;
+                *name_ty = self.deref_ty(name_ty);
                 *ty = self.deref_ty(ty);
                 self.deref_node(&mut **first_expr);
                 self.deref_node(&mut **second_expr);
@@ -591,9 +660,53 @@ impl Typing {
     }
 }
 
+static PRIMITIVES: &'static [&'static str] = &[
+    "float_of_int",
+    "print_float",
+    "print_int",
+    "print_newline",
+];
+
+pub fn is_primitive(name: &str) -> bool {
+    for prim in PRIMITIVES.iter() {
+        if &name == prim {
+            return true;
+        }
+    }
+
+    false
+}
+
+pub fn primitive_func(env: Env) -> Env {
+    let float_of_int_ty = Type::Func {
+        args: vec![Type::Int],
+        ret: Box::new(Type::Float)
+    };
+    let print_float = Type::Func {
+        args: vec![Type::Float],
+        ret: Box::new(Type::Unit),
+    };
+    let print_int_ty = Type::Func {
+        args: vec![Type::Int],
+        ret: Box::new(Type::Unit),
+    };
+    let print_newline_ty = Type::Func {
+        args: vec![Type::Unit],
+        ret: Box::new(Type::Unit),
+    };
+
+    env
+        .add(("float_of_int".to_string(), float_of_int_ty))
+        .add(("print_float".to_string(), print_float))
+        .add(("print_int".to_string(), print_int_ty))
+        .add(("print_newline".to_string(), print_newline_ty))
+}
+
 pub fn typing(node: Node) -> (TypedNode, Type) {
+    println!("Typing");
     let mut t = Typing::new();
-    match t.typing(DeBruijn::new(), &node) {
+    let env = DeBruijn::new();
+    match t.typing(primitive_func(env), &node) {
         Ok((mut nd, ref ty)) => {
             t.deref_node(&mut nd);
             (nd, t.deref_ty(ty))

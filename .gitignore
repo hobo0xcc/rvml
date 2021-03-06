@@ -1,4 +1,6 @@
 /target
+/work
+/tests
 Cargo.lock
 /.idea
 main

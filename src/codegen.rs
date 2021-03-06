@@ -2,7 +2,6 @@ use crate::{env::Environment, typing::*, closure::*};
 use std::{convert::TryInto, path::Path, unimplemented, unreachable};
 use std::rc::Rc;
 use std::cell::RefCell;
-use std::convert::TryFrom;
 use std::ops::Deref;
 use inkwell::*;
 use inkwell::OptimizationLevel;
@@ -16,12 +15,6 @@ use inkwell::types::*;
 use inkwell::targets::*;
 
 type Env<'a> = Environment<String, BasicValueEnum<'a>>; // key: variable name, value: variable value
-
-const OBJ_INT: u64 = 0;
-const OBJ_BOOL: u64 = 1;
-const OBJ_FUNC: u64 = 2;
-const OBJ_TUPLE: u64 = 3;
-const OBJ_CLOSURE: u64 = 4;
 
 pub struct CodeGen<'ctx> {
     context: &'ctx Context,
@@ -42,92 +35,15 @@ impl<'ctx> CodeGen<'ctx> {
         self.module.print_to_stderr();
     }
 
-    pub fn type_to_tag(&self, ty: &Type) -> u64 {
-        match *ty {
-            Type::Int => OBJ_INT,
-            Type::Bool => OBJ_BOOL,
-            Type::Func {
-                args: _,
-                ret: _
-            } => OBJ_FUNC,
-            Type::Tuple(_) => OBJ_TUPLE,
-            _ => unimplemented!(),
-        }
-    }
-
-    pub fn create_obj(&self, val: BasicValueEnum<'ctx>, ty: u64) -> BasicValueEnum<'ctx> {
-        let callsite = self.builder.build_call(self.get_intrinsic("llvm.stacksave").unwrap(), &[], "tmp");
-        let saved = callsite.try_as_basic_value().left().unwrap();
-
-        let obj_type = self.module.get_struct_type("obj").unwrap();
-        let obj_ptr = self.builder.build_alloca(obj_type, "tmp");
-        let field_data = self.builder.build_struct_gep(obj_ptr, 0, "tmp").unwrap();
-        let cast_val = match val {
-            BasicValueEnum::PointerValue(_) => {
-                BasicValueEnum::try_from(self.builder.build_ptr_to_int(val.into_pointer_value(), obj_type.get_field_types()[0].into_int_type(), "tmp")).unwrap()
-            },
-            _ => self.builder.build_cast(InstructionOpcode::ZExt, val, obj_type.get_field_types()[0], "tmp")
-        };
-        self.builder.build_store(field_data, cast_val);
-
-        let field_type = self.builder.build_struct_gep(obj_ptr, 1, "tmp").unwrap();
-        let ty_num = self.context.i8_type().const_int(ty, false);
-        self.builder.build_store(field_type, ty_num);
-
-        let obj = self.builder.build_load(obj_ptr, "tmp");
-
-        self.builder.build_call(self.get_intrinsic("llvm.stackrestore").unwrap(), &[saved], "tmp");
-
-        obj
-    }
-
-    pub fn store_obj(&self, obj: BasicValueEnum<'ctx>, val: BasicValueEnum<'ctx>) {
-        let callsite = self.builder.build_call(self.get_intrinsic("llvm.stacksave").unwrap(), &[], "tmp");
-        let saved = callsite.try_as_basic_value().left().unwrap();
-
-        let obj_type = self.module.get_struct_type("obj").unwrap();
-        let struct_val = obj.into_struct_value();
-        let struct_ptr = self.builder.build_alloca(struct_val.get_type(), "tmp");
-        let field_data = self.builder.build_struct_gep(struct_ptr, 0, "tmp").unwrap();
-        let val_cast = self.builder.build_cast(InstructionOpcode::Trunc, val, obj_type.get_field_types()[0], "tmp");
-        self.builder.build_store(field_data, val_cast);
-
-        self.builder.build_call(self.get_intrinsic("llvm.stackrestore").unwrap(), &[saved], "tmp");
-    }
-
-    pub fn get_obj_data_llvmty(&self, obj: BasicValueEnum<'ctx>, ty: BasicTypeEnum<'ctx>) -> BasicValueEnum<'ctx> {
-        // save stack.
-        let callsite = self.builder.build_call(self.get_intrinsic("llvm.stacksave").unwrap(), &[], "tmp");
-        let saved = callsite.try_as_basic_value().left().unwrap();
-
-        let struct_val = obj.into_struct_value();
-        let struct_ptr = self.builder.build_alloca(struct_val.get_type(), "tmp");
-        self.builder.build_store(struct_ptr, struct_val);
-        let field_data = self.builder.build_struct_gep(struct_ptr, 0, "tmp").unwrap();
-        let data = self.builder.build_load(field_data, "tmp");
-
-        // restore stack.
-        self.builder.build_call(self.get_intrinsic("llvm.stackrestore").unwrap(), &[saved], "tmp");
-
-        match ty {
-            BasicTypeEnum::PointerType(_) => BasicValueEnum::try_from(self.builder.build_int_to_ptr(data.into_int_value(), ty.into_pointer_type(), "tmp")).unwrap(),
-            _ => self.builder.build_cast(InstructionOpcode::Trunc, data, ty, "tmp"),
-        }
-    }
-
-    pub fn get_obj_data(&self, obj: BasicValueEnum<'ctx>, ty: &Type) -> BasicValueEnum<'ctx> {
-        self.get_obj_data_llvmty(obj, self.type_to_llvmty(ty))
-    }
-
     pub fn create_func_type(&self, ty: &Type) -> FunctionType<'ctx> {
         match *ty {
-            Type::Func { ref args, ret: ref _ret} => {
+            Type::Func { ref args, ref ret} => {
                 let mut arg_lltypes = Vec::new();
                 arg_lltypes.push(BasicTypeEnum::PointerType(self.context.i8_type().ptr_type(AddressSpace::Generic)));
-                for _ in args.iter() {
-                    arg_lltypes.push(BasicTypeEnum::StructType(self.module.get_struct_type("obj").unwrap()));
+                for arg_ty in args.iter() {
+                    arg_lltypes.push(self.type_to_llvmty(arg_ty));
                 }
-                let ret_lltype = BasicTypeEnum::StructType(self.module.get_struct_type("obj").unwrap());
+                let ret_lltype = self.type_to_llvmty(&**ret);
 
                 let func_lltype = ret_lltype.fn_type(&arg_lltypes, false);
                 func_lltype
@@ -155,11 +71,21 @@ impl<'ctx> CodeGen<'ctx> {
         use inkwell::types::BasicTypeEnum::*;
 
         match *ty {
+            Type::Unit => IntType(self.context.i8_type()),
             Type::Int => IntType(self.context.i32_type()),
+            Type::Float => FloatType(self.context.f32_type()),
             Type::Bool => IntType(self.context.bool_type()),
-            Type::Func { args: _, ret: _ } => PointerType(self.create_func_type(ty).ptr_type(AddressSpace::Generic)),
+            Type::Func { args: _, ret: _ } => {
+                let func_ptr_ty = PointerType(self.create_func_type(ty).ptr_type(AddressSpace::Generic));
+                let i8_fv_ptr_ty = self.context.i8_type().ptr_type(AddressSpace::Generic).as_basic_type_enum();
+                let closure_ty = self.context.struct_type(&[func_ptr_ty, i8_fv_ptr_ty], true);
+                closure_ty.ptr_type(AddressSpace::Generic).as_basic_type_enum()
+            },
             Type::Tuple(ref _tys) => PointerType(self.create_tuple_type(ty).ptr_type(AddressSpace::Generic)),
-            _ => unimplemented!(),
+            _ => {
+                println!("{}", ty);
+                unimplemented!()
+            }
         }
     }
 
@@ -173,26 +99,26 @@ impl<'ctx> CodeGen<'ctx> {
         clos_ty_list.push(func_ptr);
         clos_ty_list.push(self.closure_fv_struct(fvs));
 
-        let clos_ty = self.context.struct_type(clos_ty_list.as_slice(), false);
+        let clos_ty = self.context.struct_type(clos_ty_list.as_slice(), true);
         BasicTypeEnum::StructType(clos_ty)
     }
 
-    pub fn make_closure(&mut self, env: Rc<RefCell<Env<'ctx>>>, name: &String, fvs: &Vec<String>) -> BasicValueEnum<'ctx> {
+    pub fn make_closure(&mut self, env: Rc<RefCell<Env<'ctx>>>, name: &String, ty: &Type, fvs: &Vec<String>) -> BasicValueEnum<'ctx> {
         let func = self.module.get_function(name).unwrap();
         let func_ptr = func.as_global_value().as_pointer_value();
-        let mut fv_objs = Vec::new();
+        let mut fv_values = Vec::new();
         for fv in fvs.iter() {
-            let fv_obj_ptr = env.borrow().get(fv).unwrap();
-            let fv_obj = self.builder.build_load(fv_obj_ptr.into_pointer_value(), "tmp");
-            fv_objs.push(fv_obj);
+            let fv_val_ptr = env.borrow().get(fv).unwrap();
+            let fv_val = self.builder.build_load(fv_val_ptr.into_pointer_value(), "tmp");
+            fv_values.push(fv_val);
         }
 
         let mut fv_types = Vec::new();
-        for obj in fv_objs.iter() {
-            fv_types.push(obj.get_type());
+        for val in fv_values.iter() {
+            fv_types.push(val.get_type());
         }
 
-        let closure_ty = self.make_closure_ty(BasicTypeEnum::PointerType(func_ptr.get_type()), fv_types); // self.context.struct_type(closure_type_list.as_slice(), false);
+        let closure_ty = self.make_closure_ty(BasicTypeEnum::PointerType(func_ptr.get_type()), fv_types);
 
         let closure_ptr = self.builder.build_malloc(closure_ty, "tmp").unwrap();
         let func_ptr_field = self.builder.build_struct_gep(closure_ptr, 0, "tmp").unwrap();
@@ -202,15 +128,15 @@ impl<'ctx> CodeGen<'ctx> {
         let fv_struct_ty = closure_ty.into_struct_type().get_field_type_at_index(1).unwrap().into_pointer_type().get_element_type().into_struct_type();
         let fv_struct_ptr = self.builder.build_malloc(BasicTypeEnum::StructType(fv_struct_ty), "tmp").unwrap();
         self.builder.build_store(fv_struct_field, fv_struct_ptr);
-        for (i, obj) in fv_objs.into_iter().enumerate() {
+        for (i, val) in fv_values.into_iter().enumerate() {
             let fv_field = self.builder.build_struct_gep(fv_struct_ptr, i.try_into().unwrap(), "tmp").unwrap();
-            self.builder.build_store(fv_field, obj);
+            self.builder.build_store(fv_field, val);
         }
 
-        let closure_basic = BasicValueEnum::PointerValue(closure_ptr);
-        let obj = self.create_obj(closure_basic, OBJ_CLOSURE);
+        let closure_cast_ty = self.type_to_llvmty(ty);
+        let closure_cast_ptr = self.builder.build_bitcast(closure_ptr, closure_cast_ty, "tmp");
 
-        obj
+        closure_cast_ptr
     }
 
     pub fn gen_objfile(&mut self, file_path: String, target_name: String, target_triple_name: String) {
@@ -263,7 +189,7 @@ impl<'ctx> CodeGen<'ctx> {
         let obj_type = self.context.opaque_struct_type("obj");
         let i64_ty = BasicTypeEnum::IntType(self.context.i64_type());
         let i8_ty = BasicTypeEnum::IntType(self.context.i8_type());
-        obj_type.set_body(&[i64_ty, i8_ty], false);
+        obj_type.set_body(&[i64_ty, i8_ty], true);
     }
 
     pub fn codegen_init(&mut self, fundefs: Vec<FunDef>) {
@@ -272,32 +198,44 @@ impl<'ctx> CodeGen<'ctx> {
 
         self.codegen_toplevel(fundefs);
 
-        let i32_type = self.context.i32_type();
-        let main_fn_type = i32_type.fn_type(&[], false);
+        let i8_type = self.context.i8_type();
+        let main_fn_type = i8_type.fn_type(&[], false);
         let main_fn = self.module.add_function("main", main_fn_type, None);
         let basic_block = self.context.append_basic_block(main_fn, "entry");
         self.builder.position_at_end(basic_block);
     }
 
     pub fn codegen_declare(&mut self, fundef: &FunDef) {
-        let (ref func_name, ref _func_ty) = fundef.name;
-        let mut arg_lltypes = Vec::new();
+        let (ref func_name, ref func_ty) = fundef.name;
 
         let mut fv_types = Vec::new();
-        for _ in fundef.formal_fv.iter() {
-            fv_types.push(BasicTypeEnum::StructType(self.module.get_struct_type("obj").unwrap()));
+        for (_name, ty) in fundef.formal_fv.iter() {
+            fv_types.push(self.type_to_llvmty(ty));
         }
-        arg_lltypes.push(BasicTypeEnum::PointerType(self.context.i8_type().ptr_type(AddressSpace::Generic)));
-        for _ in fundef.args.iter() {
-            arg_lltypes.push(BasicTypeEnum::StructType(self.module.get_struct_type("obj").unwrap()));
+        
+        // let fv_struct_ptr = self.closure_fv_struct(fv_types);
+
+        let mut arg_lltypes = Vec::new();
+        arg_lltypes.push(self.context.i8_type().ptr_type(AddressSpace::Generic).as_basic_type_enum());
+        for (_name, ty) in fundef.args.iter() {
+            arg_lltypes.push(self.type_to_llvmty(ty));
         }
-        let ret_lltype = BasicTypeEnum::StructType(self.module.get_struct_type("obj").unwrap());
+
+        let ret_lltype = match *func_ty {
+            Type::Func {
+                args: ref _args,
+                ref ret,
+            } => {
+                self.type_to_llvmty(&**ret)
+            },
+            _ => unreachable!(),
+        };
         let func_lltype = ret_lltype.fn_type(&arg_lltypes, false);
         let _func = self.module.add_function(func_name, func_lltype, None);
     }
 
     pub fn codegen_func(&mut self, fundef: &FunDef) {
-        let (ref func_name, ref _func_ty) = fundef.name;
+        let (ref func_name, ref func_ty) = fundef.name;
         let func = self.module.get_function(func_name).unwrap();
         let basic_block = self.context.append_basic_block(func, "entry");
         self.builder.position_at_end(basic_block);
@@ -307,18 +245,19 @@ impl<'ctx> CodeGen<'ctx> {
             args.push(arg.0.to_string());
         }
         let mut fv_types = Vec::new();
-        for _ in fundef.formal_fv.iter() {
-            let obj_type = self.module.get_struct_type("obj").unwrap();
-            fv_types.push(BasicTypeEnum::StructType(obj_type));
+        for (_name, ty) in fundef.formal_fv.iter() {
+            let val_type = self.type_to_llvmty(ty);
+            fv_types.push(val_type);
         }
         let fv_struct_ptr_ty = self.closure_fv_struct(fv_types);
         let fv_i8_ptr = func.get_first_param().unwrap();
-
-        // let fv_struct_ptr_ty = fv_struct_ty.ptr_type(AddressSpace::Generic);
         let fv_ptr = self.builder.build_bitcast(fv_i8_ptr, fv_struct_ptr_ty, "tmp");
+
+        let mut fv_names = Vec::new();
         for (i, (name, _ty)) in fundef.formal_fv.iter().enumerate() {
-            let obj_ptr = self.builder.build_struct_gep(fv_ptr.into_pointer_value(), i.try_into().unwrap(), name).unwrap();
-            env.set(name.to_string(), BasicValueEnum::PointerValue(obj_ptr));
+            fv_names.push(name.to_string());
+            let val_ptr = self.builder.build_struct_gep(fv_ptr.into_pointer_value(), i.try_into().unwrap(), name).unwrap();
+            env.set(name.to_string(), BasicValueEnum::PointerValue(val_ptr));
         }
         
         for (arg_name, param) in args.iter().zip(func.get_param_iter().skip(1)) {
@@ -326,7 +265,26 @@ impl<'ctx> CodeGen<'ctx> {
             self.builder.build_store(arg_ptr, param);
             env.set(arg_name.to_string(), BasicValueEnum::PointerValue(arg_ptr));
         }
-        let func_res = self.codegen(&fundef.body, Rc::new(RefCell::new(env)));
+
+        let env_rc = Rc::new(RefCell::new(env));
+
+        if fundef.is_recurs {
+            let mut fundef_fv_names = Vec::new();
+            for (name, _ty) in fundef.formal_fv.iter() {
+                fundef_fv_names.push(name.to_string());
+            }
+            let closure_self = self.make_closure(env_rc.clone(), func_name, func_ty, &fundef_fv_names);
+            let closure_self_ptr = self.builder.build_alloca(closure_self.get_type(), "tmp");
+            self.builder.build_store(closure_self_ptr, closure_self);
+            env_rc.borrow_mut().set(func_name.to_string(), closure_self_ptr.as_basic_value_enum());
+        }
+        // let closure_self = self.make_closure(env_rc.clone(), func_name, &fv_names);
+        // let closure_self_ptr = self.builder.build_alloca(closure_self.get_type(), "tmp");
+        // self.builder.build_store(closure_self_ptr, closure_self);
+        // env_rc.borrow_mut().set(func_name.to_string(), closure_self_ptr.as_basic_value_enum());
+
+        let func_res = self.codegen(&fundef.body, env_rc.clone());
+
         self.builder.build_return(Some(&func_res));
     }
 
@@ -344,53 +302,71 @@ impl<'ctx> CodeGen<'ctx> {
         use crate::closure::CNode::*;
 
         match *node {
+            Unit => {
+                let unit_val = self.context.i8_type().const_int(0, false);
+                IntValue(unit_val)
+            },
             Int(ref n) => {
                 let int_ty = self.type_to_llvmty(&Type::Int);
                 let res = int_ty.into_int_type().const_int((*n) as u64, false);
-                self.create_obj(IntValue(res), OBJ_INT)
+                IntValue(res)
+            },
+            Float(ref f) => {
+                let float_ty = self.type_to_llvmty(&Type::Float);
+                let res = float_ty.into_float_type().const_float((*f).try_into().unwrap());
+                FloatValue(res)
             },
             Bool(ref b) => {
                 let bool_ty = self.type_to_llvmty(&Type::Bool);
                 let res = bool_ty.into_int_type().const_int(*b as u64, false);
-                self.create_obj(IntValue(res), OBJ_BOOL)
+                IntValue(res)
             },
-            VarExpr(ref name, ref _ty) => {
+            VarExpr(ref name, ref _ty, ref _subst, ref _is_extern) => {
                 let var = env.deref().borrow().get(name).unwrap();
-                let res = match var {
-                    PointerValue(p) => {
-                        let deref_p_ty = p.get_type().get_element_type();
-                        match deref_p_ty {
-                            AnyTypeEnum::FunctionType(_) => PointerValue(p),
-                            _ => self.builder.build_load(p, "tmp"),
-                        }
-                    },
-                    _ =>  {
-                        println!("{:?}", var);
-                        unimplemented!()
-                    },
-                };
+                let res = self.builder.build_load(var.into_pointer_value(), "tmp");
+                // let res = match ty {
+                //     Type::Func { args: _, ret: _, } => {
+                //         var
+                //     },
+                //     _ => {
+                //         self.builder.build_load(var.into_pointer_value(), "tmp")
+                //     }
+                // };
+                // let res = match var {
+                //     PointerValue(p) => {
+                //         let deref_p_ty = p.get_type().get_element_type();
+                //         match deref_p_ty {
+                //             AnyTypeEnum::FunctionType(_) => PointerValue(p),
+                //             _ => self.builder.build_load(p, "tmp"),
+                //         }
+                //     },
+                //     _ =>  {
+                //         println!("{:?}", var);
+                //         unimplemented!()
+                //     },
+                // };
                 res
             },
             Not(ref expr) => {
-                let expr_obj = self.codegen(expr, env);
-                let expr_val = self.get_obj_data(expr_obj, &Type::Bool);
+                let expr_val = self.codegen(expr, env);
                 let res = self.builder.build_not(expr_val.into_int_value(), "tmp");
-                self.create_obj(IntValue(res), OBJ_BOOL)
+                IntValue(res)
             },
             Tuple(ref exprs, ref ty) => {
-                let mut objs = Vec::new();
+                let mut values = Vec::new();
                 for expr in exprs.iter() {
-                    let obj = self.codegen(expr, env.clone());
-                    objs.push(obj);
+                    let val = self.codegen(expr, env.clone());
+                    values.push(val);
                 }
                 let tuple_llty = self.create_tuple_type(ty);
-                let tuple_obj = self.builder.build_malloc(tuple_llty, "tmp").unwrap();
-                for (i, obj) in objs.into_iter().enumerate() {
-                    let field = self.builder.build_struct_gep(tuple_obj, i.try_into().unwrap(), "tmp").unwrap();
-                    self.builder.build_store(field, obj);
+
+                let tuple_ptr = self.builder.build_malloc(tuple_llty, "tmp").unwrap();
+                for (i, val) in values.into_iter().enumerate() {
+                    let field = self.builder.build_struct_gep(tuple_ptr, i.try_into().unwrap(), "tmp").unwrap();
+                    self.builder.build_store(field, val);
                 }
 
-                self.create_obj(BasicValueEnum::PointerValue(tuple_obj), OBJ_TUPLE)
+                BasicValueEnum::PointerValue(tuple_ptr)
             },
             Expr { ref lhs, ref op, ref rhs, ref ty } => {
                 let lhs_val = self.codegen(lhs, env.clone());
@@ -398,8 +374,8 @@ impl<'ctx> CodeGen<'ctx> {
 
                 match *ty {
                     Type::Int => {
-                        let lval = self.get_obj_data(lhs_val, &Type::Int).into_int_value();
-                        let rval = self.get_obj_data(rhs_val, &Type::Int).into_int_value();
+                        let lval = lhs_val.into_int_value();
+                        let rval = rhs_val.into_int_value();
                         let res = match op.as_str() {
                             "+" => self.builder.build_int_add(lval, rval, "tmp"),
                             "-" => self.builder.build_int_sub(lval, rval, "tmp"),
@@ -408,18 +384,53 @@ impl<'ctx> CodeGen<'ctx> {
                             _ => unreachable!(),
                         };
 
-                        self.create_obj(IntValue(res), OBJ_INT)
+                        IntValue(res)
                     },
-                    Type::Bool => {
-                        let lval = self.get_obj_data(lhs_val, &Type::Int).into_int_value();
-                        let rval = self.get_obj_data(rhs_val, &Type::Int).into_int_value();
+                    Type::Float => {
+                        let lval = lhs_val.into_float_value();
+                        let rval = rhs_val.into_float_value();
                         let res = match op.as_str() {
-                            "<=" => self.builder.build_int_compare(IntPredicate::SLE, lval, rval, "tmp"),
-                            "=" => self.builder.build_int_compare(IntPredicate::EQ, lval, rval, "tmp"),
+                            "+." => self.builder.build_float_add(lval, rval, "tmp"),
+                            "-." => self.builder.build_float_sub(lval, rval, "tmp"),
+                            "*." => self.builder.build_float_mul(lval, rval, "tmp"),
+                            "/." => self.builder.build_float_div(lval, rval, "tmp"),
                             _ => unreachable!(),
                         };
 
-                        self.create_obj(IntValue(res), OBJ_BOOL)
+                        FloatValue(res)
+                    },
+                    Type::Bool => {
+                        let res = match (lhs.get_type(), rhs.get_type()) {
+                            (Type::Int, Type::Int) => {
+                                let lval = lhs_val.into_int_value();
+                                let rval = rhs_val.into_int_value();
+                                match op.as_str() {
+                                    "<" => self.builder.build_int_compare(IntPredicate::SLT, lval, rval, "tmp"),
+                                    ">" => self.builder.build_int_compare(IntPredicate::SGT, lval, rval, "tmp"),
+                                    "<=" => self.builder.build_int_compare(IntPredicate::SLE, lval, rval, "tmp"),
+                                    ">=" => self.builder.build_int_compare(IntPredicate::SGE, lval, rval, "tmp"),
+                                    "=" => self.builder.build_int_compare(IntPredicate::EQ, lval, rval, "tmp"),
+                                    "<>" => self.builder.build_int_compare(IntPredicate::NE, lval, rval, "tmp"),
+                                    _ => unreachable!(),
+                                }
+                            },
+                            (Type::Float, Type::Float) => {
+                                let lval = lhs_val.into_float_value();
+                                let rval = rhs_val.into_float_value();
+                                match op.as_str() {
+                                    "<" => self.builder.build_float_compare(FloatPredicate::OLT, lval, rval, "tmp"),
+                                    ">" => self.builder.build_float_compare(FloatPredicate::OGT, lval, rval, "tmp"),
+                                    "<=" => self.builder.build_float_compare(FloatPredicate::OLE, lval, rval, "tmp"),
+                                    ">=" => self.builder.build_float_compare(FloatPredicate::OGE, lval, rval, "tmp"),
+                                    "=" => self.builder.build_float_compare(FloatPredicate::OEQ, lval, rval, "tmp"),
+                                    "<>" => self.builder.build_float_compare(FloatPredicate::ONE, lval, rval, "tmp"),
+                                    _ => unreachable!(),
+                                }
+                            },
+                            _ => unreachable!(),
+                        };
+
+                        IntValue(res)
                     },
                     _ => unreachable!()
                 }
@@ -431,7 +442,7 @@ impl<'ctx> CodeGen<'ctx> {
                 let cont_bb = self.context.append_basic_block(func, "if_cont");
                 
                 let cond_obj =  self.codegen(cond, env.clone());
-                let cond_val = self.get_obj_data(cond_obj, &Type::Bool).into_int_value();
+                let cond_val = cond_obj.into_int_value();
                 self.builder.build_conditional_branch(cond_val, then_bb, else_bb);
 
                 self.builder.position_at_end(then_bb);
@@ -447,7 +458,7 @@ impl<'ctx> CodeGen<'ctx> {
                 let else_bb = self.builder.get_insert_block().unwrap();
 
                 self.builder.position_at_end(cont_bb);
-                let phi = self.builder.build_phi(self.module.get_struct_type("obj").unwrap(), "iftmp");
+                let phi = self.builder.build_phi(then_val.get_type(), "iftmp");
 
                 phi.add_incoming(&[
                     (&then_val, then_bb),
@@ -467,17 +478,16 @@ impl<'ctx> CodeGen<'ctx> {
                 let res = self.codegen(second_expr, new_env);
                 res
             },
-            LetTupleExpr { ref names, ref first_expr, ref second_expr, ref tuple_ty, ty: ref _ty } => {
-                let tuple_obj = self.codegen(first_expr, env.clone());
-                let tuple_ptr = self.get_obj_data(tuple_obj, tuple_ty).into_pointer_value();
+            LetTupleExpr { ref names, ref first_expr, ref second_expr, tuple_ty: ref _tuple_ty, ty: ref _ty } => {
+                let tuple_ptr = self.codegen(first_expr, env.clone()).into_pointer_value();
                 let mut env_child = Env::make_child(env);
-                for (i, (name, ty)) in names.iter().enumerate() {
+                for (i, (name, _ty)) in names.iter().enumerate() {
                     let field = self.builder.build_struct_gep(tuple_ptr, i.try_into().unwrap(), "tmp").unwrap();
                     let data = self.builder.build_load(field, "tmp");
 
-                    let obj_type = self.module.get_struct_type("obj").unwrap();
-                    let ptr = self.builder.build_alloca(obj_type, name);
-                    self.builder.build_store(ptr, self.create_obj(data, self.type_to_tag(ty)));
+                    let data_type = data.get_type();
+                    let ptr = self.builder.build_alloca(data_type, name);
+                    self.builder.build_store(ptr, data);
                     env_child.set(name.to_string(), PointerValue(ptr));
                 }
                 self.builder.build_free(tuple_ptr);
@@ -488,16 +498,27 @@ impl<'ctx> CodeGen<'ctx> {
             },
             MakeCls {
                 ref name,
+                ref dups,
                 ref actual_fv,
                 ref second_expr,
                 ty: ref _ty,
             } => {
-                let (ref id, ref _id_ty) = name;
-                let closure = self.make_closure(env.clone(), id, actual_fv);
-                let closure_ptr = self.builder.build_alloca(closure.get_type(), "tmp");
-                self.builder.build_store(closure_ptr, closure);
+                let (ref id, ref id_ty) = name;
                 let mut new_env = Env::make_child(env.clone());
-                new_env.set(id.to_string(), BasicValueEnum::PointerValue(closure_ptr));
+                if let Some(dups) = dups {
+                    for (dup_id, dup_ty) in dups.iter() {
+                        println!("{}", dup_id);
+                        let closure = self.make_closure(env.clone(), dup_id, dup_ty, actual_fv);
+                        let closure_ptr = self.builder.build_alloca(closure.get_type(), "tmp");
+                        self.builder.build_store(closure_ptr, closure);
+                        new_env.set(dup_id.to_string(), BasicValueEnum::PointerValue(closure_ptr));
+                    }
+                } else {
+                    let closure = self.make_closure(env.clone(), id, id_ty, actual_fv);
+                    let closure_ptr = self.builder.build_alloca(closure.get_type(), "tmp");
+                    self.builder.build_store(closure_ptr, closure);
+                    new_env.set(id.to_string(), BasicValueEnum::PointerValue(closure_ptr));
+                }
                 let new_env_rc = Rc::new(RefCell::new(new_env));
                 let result = self.codegen(&*second_expr, new_env_rc);
                 result
@@ -505,26 +526,28 @@ impl<'ctx> CodeGen<'ctx> {
             AppCls {
                 ref func,
                 ref args,
-                ref func_ty,
+                func_ty: ref _func_ty,
                 ty: ref _ty,
             } => {
-                let clos_obj = self.codegen(&*func, env.clone());
-                let mut clos_struct_ty_elems = Vec::new();
-                clos_struct_ty_elems.push(self.type_to_llvmty(func_ty));
-                clos_struct_ty_elems.push(BasicTypeEnum::PointerType(self.context.i8_type().ptr_type(AddressSpace::Generic)));
-                let clos_struct_ptr_ty = self.context.struct_type(clos_struct_ty_elems.as_slice(), false).ptr_type(AddressSpace::Generic);
-                let clos_struct_ptr = self.get_obj_data_llvmty(clos_obj, BasicTypeEnum::PointerType(clos_struct_ptr_ty));
+                let clos_val = self.codegen(&*func, env.clone());
+                println!("{:?}", clos_val);
+                // let mut clos_struct_ty_elems = Vec::new();
+                // clos_struct_ty_elems.push(self.type_to_llvmty(func_ty));
+                // clos_struct_ty_elems.push(BasicTypeEnum::PointerType(self.context.i8_type().ptr_type(AddressSpace::Generic)));
+                // let clos_struct_ptr_ty = self.context.struct_type(clos_struct_ty_elems.as_slice(), true).ptr_type(AddressSpace::Generic);
+                // let clos_struct_ptr = self.get_obj_data_llvmty(clos_obj, BasicTypeEnum::PointerType(clos_struct_ptr_ty));
 
-                let func_ptr_field = self.builder.build_struct_gep(clos_struct_ptr.into_pointer_value(), 0, "tmp").unwrap();
+                let func_ptr_field = self.builder.build_struct_gep(clos_val.into_pointer_value(), 0, "tmp").unwrap();
                 let func_ptr = self.builder.build_load(func_ptr_field, "tmp").into_pointer_value();
 
+                let fv_field = self.builder.build_struct_gep(clos_val.into_pointer_value(), 1, "tmp").unwrap();
+                let fv_ptr = self.builder.build_load(fv_field, "tmp");
+
                 let mut func_args = Vec::new();
-                let fv_field = self.builder.build_struct_gep(clos_struct_ptr.into_pointer_value(), 1, "tmp").unwrap();
-                let fv_i8_ptr = self.builder.build_load(fv_field, "tmp");
-                func_args.push(fv_i8_ptr);
+                func_args.push(fv_ptr);
                 for arg in args.iter() {
-                    let arg_obj = self.codegen(arg, env.clone());
-                    func_args.push(arg_obj);
+                    let arg_val = self.codegen(arg, env.clone());
+                    func_args.push(arg_val);
                 }
 
                 let result = self.builder.build_call(func_ptr, func_args.as_slice(), "tmp").try_as_basic_value().unwrap_left();
@@ -533,25 +556,47 @@ impl<'ctx> CodeGen<'ctx> {
             AppDir {
                 ref func,
                 ref args,
-                func_ty: ref _func_ty,
+                ref func_ty,
                 ty: ref _ty,
             } => {
-                let func_ll = self.module.get_function(&func).unwrap();
-                let mut arg_objs = Vec::new();
-                let i8_ptr_null = self.context.i8_type().ptr_type(AddressSpace::Generic).const_null();
-                arg_objs.push(BasicValueEnum::PointerValue(i8_ptr_null));
-                for arg in args.iter() {
-                    arg_objs.push(self.codegen(arg, env.clone()));
+                let (name, _ty) = match **func {
+                    CNode::VarExpr(ref name, ref ty, _, _) => {
+                        (name.clone(), ty.clone())
+                    },
+                    _ => unreachable!(),
+                };
+                if let Some(func_ll) = self.module.get_function(&name) {
+                    let i8_ptr_null = self.context.i8_type().ptr_type(AddressSpace::Generic).const_null();
+
+                    let mut arg_values = Vec::new();
+                    arg_values.push(BasicValueEnum::PointerValue(i8_ptr_null));
+                    for arg in args.iter() {
+                        arg_values.push(self.codegen(arg, env.clone()));
+                    }
+                    
+                    let result = self.builder.build_call(func_ll, arg_values.as_slice(), "tmp").try_as_basic_value().unwrap_left();
+                    result
+                } else {
+                    let func_llty = self.create_func_type(func_ty);
+                    let new_func = self.module.add_function(&name, func_llty, None);
+
+                    let mut arg_values = Vec::new();
+                    let i8_ptr_null = self.context.i8_type().ptr_type(AddressSpace::Generic).const_null();
+                    arg_values.push(BasicValueEnum::PointerValue(i8_ptr_null));
+                    for arg in args.iter() {
+                        arg_values.push(self.codegen(arg, env.clone()));
+                    }
+
+                    let result = self.builder.build_call(new_func, arg_values.as_slice(), "tmp").try_as_basic_value().unwrap_left();
+                    result
                 }
-                
-                let result = self.builder.build_call(func_ll, arg_objs.as_slice(), "tmp").try_as_basic_value().unwrap_left();
-                result
             },
         }
     }
 }
 
 pub fn codegen(prog: (Vec<FunDef>, CNode), file_name: String, target_name: String, target_triple: String) {
+    println!("Codegen");
     let config = InitializationConfig::default();
     Target::initialize_all(&config);
     let context = Context::create();
@@ -560,9 +605,9 @@ pub fn codegen(prog: (Vec<FunDef>, CNode), file_name: String, target_name: Strin
     let mut c = CodeGen::new(&context, module, builder);
     c.codegen_init(prog.0);
     let env = Rc::new(RefCell::new(Env::new()));
-    let res = c.codegen(&prog.1, env);
-    let v = c.get_obj_data(res, &Type::Int).into_int_value();
-    c.builder.build_return(Some(&v));
-    // c.print_ir();
+    let res = c.codegen(&prog.1, env).into_int_value();
+    // let v = c.get_obj_data(res, &Type::Int).into_int_value();
+    c.builder.build_return(Some(&res));
+    c.print_ir();
     c.gen_objfile(file_name, target_name, target_triple);
 }

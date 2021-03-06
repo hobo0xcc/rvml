@@ -2,14 +2,17 @@ use combine::parser::char::*;
 use combine::*;
 use combine::stream::position;
 use std::{process, unimplemented};
+use std::fmt;
 
 #[derive(Debug, Clone, PartialEq)]
 pub enum Token {
     Num(i32),
+    Float(f32),
     Op(String),
     LParen,
     RParen,
     Comma,
+    SemiColon,
     If,
     Then,
     Else,
@@ -18,9 +21,35 @@ pub enum Token {
     Rec,
     True,
     False,
-    Not,
     Ident(String),
     Nop,
+    Eof,
+}
+
+impl fmt::Display for Token {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        use Token::*;
+        match *self {
+            Num(ref n) => write!(f, "Num({})", *n),
+            Float(ref fl) => write!(f, "Float({})", *fl),
+            Op(ref s) => write!(f, "Op({})", s),
+            LParen => write!(f, "LParen"),
+            RParen => write!(f, "RParen"),
+            Comma => write!(f, "Comma"),
+            SemiColon => write!(f, "SemiColon"),
+            If => write!(f, "If"),
+            Then => write!(f, "Then"),
+            Else => write!(f, "Else"),
+            Let => write!(f, "Let"),
+            In => write!(f, "In"),
+            Rec => write!(f, "Rec"),
+            True => write!(f, "True"),
+            False => write!(f, "False"),
+            Ident(ref s) => write!(f, "Ident({})", s),
+            Nop => write!(f, "Nop"),
+            Eof => write!(f, "Eof"),
+        }
+    }
 }
 
 impl Token {
@@ -48,6 +77,20 @@ parser! {
 }
 
 parser! {
+    fn float_num_token[Input]()(Input) -> Token
+    where [
+        Input: Stream<Token = char>,
+        Input::Error: ParseError<char, Input::Range, Input::Position>,
+    ] {
+        (
+            many1::<String, _, _>(digit()),
+            token('.'),
+            digit(),
+        ).map(|(int, _, dec)| Token::Float(format!("{}.{}", int, dec).parse::<f32>().unwrap()))
+    }
+}
+
+parser! {
     fn op_token[Input]()(Input) -> Token
     where [
         Input: Stream<Token = char>,
@@ -57,6 +100,10 @@ parser! {
             attempt((token('<'), token('='))).map(|_| Token::Op("<=".to_string())),
             attempt((token('>'), token('='))).map(|_| Token::Op(">=".to_string())),
             attempt((token('<'), token('>'))).map(|_| Token::Op("<>".to_string())),
+            attempt((token('+'), token('.'))).map(|_| Token::Op("+.".to_string())),
+            attempt((token('-'), token('.'))).map(|_| Token::Op("-.".to_string())),
+            attempt((token('*'), token('.'))).map(|_| Token::Op("*.".to_string())),
+            attempt((token('/'), token('.'))).map(|_| Token::Op("/.".to_string())),
             token('+').map(|_| Token::Op("+".to_string())),
             token('-').map(|_| Token::Op("-".to_string())),
             token('*').map(|_| Token::Op("*".to_string())),
@@ -78,6 +125,7 @@ parser! {
             token('(').map(|_| Token::LParen),
             token(')').map(|_| Token::RParen),
             token(',').map(|_| Token::Comma),
+            token(';').map(|_| Token::SemiColon),
         ))
     }
 }
@@ -88,7 +136,10 @@ parser! {
         Input: Stream<Token = char>,
         Input::Error: ParseError<char, Input::Range, Input::Position>,
     ] {
-        many1::<String, _, _>(satisfy(|c: char| c.is_alphabetic() || c == '_' || c == '.')).map(|s: String| match s.as_str() {
+        (
+            many1::<String, _, _>(satisfy(|c: char| c.is_alphabetic() || c == '_' || c == '.')),
+            many::<String, _, _>(satisfy(|c: char| c.is_alphanumeric() || c == '_' || c == '.'))
+        ).map(|(s, t)| match format!("{}{}", s, t).as_str() {
             "if" => Token::If,
             "then" => Token::Then,
             "else" => Token::Else,
@@ -97,15 +148,17 @@ parser! {
             "rec" => Token::Rec,
             "true" => Token::True,
             "false" => Token::False,
-            "not" => Token::Not,
-            _ => Token::Ident(s),
+            "not" => Token::Op("not".to_string()),
+            _ => Token::Ident(format!("{}{}", s, t)),
         })
     }
 }
 
 pub fn tokenize(s: &str) -> Vec<Token> {
+    println!("Tokenize");
     let mut lexer = many1::<Vec<Token>, _, _>(choice((
-        num_token(),
+        attempt(float_num_token()),
+        attempt(num_token()),
         op_token(),
         symbol_token(),
         keyword_token(),

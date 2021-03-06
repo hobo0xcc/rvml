@@ -1,12 +1,14 @@
+use crate::typing::{Type, TypedNode, is_primitive, Subst};
 use rpds::{HashTrieMap, HashTrieSet};
-use crate::typing::{Type, TypedNode};
 use std::hash::Hash;
 
 #[derive(Clone, Debug, PartialEq)]
 pub enum CNode {
+    Unit,
     Int(i32),
+    Float(f32),
     Bool(bool),
-    VarExpr(String, Type),
+    VarExpr(String, Type, Subst, bool),
     Not(Box<CNode>),
     Tuple(Vec<CNode>, Type),
     Expr {
@@ -36,6 +38,7 @@ pub enum CNode {
     },
     MakeCls {
         name: (String, Type),
+        dups: Option<Vec<(String, Type)>>,
         actual_fv: Vec<String>,
         second_expr: Box<CNode>,
         ty: Type,
@@ -47,10 +50,32 @@ pub enum CNode {
         ty: Type,
     },
     AppDir {
-        func: String,
+        func: Box<CNode>,
         args: Vec<CNode>,
         func_ty: Type,
         ty: Type,
+    }
+}
+
+impl CNode {
+    pub fn get_type(&self) -> Type {
+        use CNode::*;
+        match *self {
+            Unit => Type::Unit,
+            Int(_) => Type::Int,
+            Float(_) => Type::Float,
+            Bool(_) => Type::Bool,
+            VarExpr(_, ref ty, _, _) => ty.clone(),
+            Not(_) => Type::Bool,
+            Tuple(_, ref ty) => ty.clone(),
+            Expr { lhs: _, op: _, rhs: _, ref ty } => ty.clone(),
+            IfExpr { cond: _, then_body: _, else_body: _, ref ty } => ty.clone(),
+            LetExpr { name: _, first_expr: _, second_expr: _, ref ty } => ty.clone(),
+            LetTupleExpr { names: _, first_expr: _, second_expr: _, tuple_ty: _, ref ty } => ty.clone(),
+            MakeCls { name: _, dups: _, actual_fv: _, second_expr: _, ref ty } => ty.clone(),
+            AppCls { func: _, args: _, func_ty: _, ref ty } => ty.clone(),
+            AppDir { func: _, args: _, func_ty: _, ref ty } => ty.clone(),
+        }
     }
 }
 
@@ -63,6 +88,7 @@ pub struct FunDef {
     pub args: Vec<(String, Type)>,
     pub formal_fv: Vec<(String, Type)>,
     pub body: CNode,
+    pub is_recurs: bool,
 }
 
 pub struct Closure {
@@ -115,8 +141,9 @@ impl Closure {
 
     pub fn fv(&mut self, node: &CNode) -> Known {
         match *node {
-            CNode::Int(_) | CNode::Bool(_) => Known::new(),
-            CNode::VarExpr(ref name, ref _ty) => {
+            CNode::Unit => Known::new(),
+            CNode::Int(_) | CNode::Bool(_) | CNode::Float(_) => Known::new(),
+            CNode::VarExpr(ref name, ref _ty, ref _subst, ref _is_extern) => {
                 Known::new().insert(name.to_string())
             },
             CNode::Not(ref expr) => {
@@ -178,6 +205,7 @@ impl Closure {
             },
             CNode::MakeCls {
                 ref name,
+                dups: ref _dups,
                 ref actual_fv,
                 ref second_expr,
                 ty: ref _ty,
@@ -224,9 +252,12 @@ impl Closure {
     pub fn closure(&mut self, env: Env, known: Known, node: &TypedNode) -> CNode {
         use crate::typing::TypedNode::*;
         match *node {
+            Unit => CNode::Unit,
             Int(ref n) => CNode::Int(*n),
+            Float(ref f) => CNode::Float(*f),
             Bool(ref b) => CNode::Bool(*b),
-            VarExpr(ref name, ref ty) => CNode::VarExpr(name.to_string(), ty.clone()),
+            VarExpr(ref name, ref ty, ref subst) => CNode::VarExpr(name.to_string(), ty.clone(), subst.clone(), false),
+            VarExtExpr(ref name, ref ty) => CNode::VarExpr(name.to_string(), ty.clone(), Subst::new(), true),
             Not(ref expr) => CNode::Not(Box::new(self.closure(env, known, &**expr))),
             Tuple(ref nds, ref ty) => {
                 let mut new_nds = Vec::new();
@@ -349,19 +380,23 @@ impl Closure {
                 }
                 s_args = s_args.insert(id.to_string());
 
-                let zs = Closure::diff(self.fv(&e1), s_args);
+                let fv_e1 = self.fv(&e1);
+                let is_recurs = fv_e1.contains(id);
+                let zs = Closure::diff(fv_e1, s_args);
                 let zts = zs.iter().map(|x| (x.to_string(), new_env.get(x).unwrap().clone())).collect();
                 let new_fun = FunDef {
                     name: (id.to_string(), id_ty.clone()),
                     args: args.clone(),
                     formal_fv: zts,
                     body: e1,
+                    is_recurs,
                 };
                 self.toplevel.push(new_fun);
                 let e2 = self.closure(new_env, new_known, &**second_expr);
                 if self.fv(&e2).contains(id) {
                     CNode::MakeCls {
                         name: (id.to_string(), id_ty.clone()),
+                        dups: None,
                         actual_fv: zs.iter().map(|x| x.to_string()).collect(),
                         second_expr: Box::new(e2),
                         ty: ty.clone(),
@@ -377,12 +412,15 @@ impl Closure {
                 ref ty
             } => {
                 let new_func = self.closure(env.clone(), known.clone(), &**func);
-                let is_known;
-                let mut label_name: String = String::new();
+                let mut is_known;
+                // let mut label_name: String = String::new();
                 match new_func {
-                    CNode::VarExpr(ref name, ref _ty) => {
+                    CNode::VarExpr(ref name, ref _ty, ref _subst, ref _is_extern) => {
                         is_known = known.contains(name);
-                        label_name = name.to_string();
+                        if is_primitive(name) {
+                            is_known = true;
+                        }
+                        // label_name = name.to_string();
                     },
                     _ => is_known = false,
                 }
@@ -399,7 +437,7 @@ impl Closure {
                     }
                 } else {
                     CNode::AppDir {
-                        func: label_name,
+                        func: Box::new(new_func),
                         args: new_args,
                         func_ty: func_ty.clone(),
                         ty: ty.clone(),
@@ -411,6 +449,7 @@ impl Closure {
 }
 
 pub fn closure(node: TypedNode) -> (Vec<FunDef>, CNode) {
+    println!("Closure");
     let mut clos = Closure::new();
     let new_node = clos.closure(Env::new(), Known::new(), &node);
     

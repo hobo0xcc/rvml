@@ -1,5 +1,5 @@
 use rpds::HashTrieMap;
-use crate::typing::TypedNode;
+use crate::typing::{TypedNode, is_primitive};
 
 pub struct Alpha {
     counter: usize,
@@ -30,9 +30,16 @@ impl Alpha {
     pub fn alpha(&mut self, env: Env, node: &mut TypedNode) {
         use crate::typing::TypedNode::*;
         match *node {
+            Unit => {},
             Int(ref _n) => {},
+            Float(ref _f) => {},
             Bool(ref _b) => {},
-            VarExpr(ref mut name, ref _ty) => *name = self.find(env, name),
+            VarExpr(ref mut name, ref _ty, _) => {
+                if !is_primitive(name) {
+                    *name = self.find(env, name);
+                }
+            }
+            VarExtExpr(ref mut _name, ref _ty) => {},
             Not(ref mut expr) => self.alpha(env, expr),
             Tuple(ref mut nds, ref _ty) => {
                 for nd in nds.iter_mut() {
@@ -94,9 +101,12 @@ impl Alpha {
                 ty: ref _ty,
             } => {
                 let (ref mut id, ref mut _id_ty) = name;
-                let new_id = self.gen_id(id);
-                let env_e2 = env.insert(id.clone(), new_id.clone());
-                *id = new_id;
+                let mut env_e2 = Env::new();
+                if !is_primitive(id) {
+                    let new_id = self.gen_id(id);
+                    env_e2 = env.insert(id.clone(), new_id.clone());
+                    *id = new_id;
+                }
 
                 let mut env_e1 = env_e2.clone();
 
@@ -126,6 +136,7 @@ impl Alpha {
 }
 
 pub fn alpha(mut node: TypedNode) -> TypedNode {
+    println!("Alpha");
     let mut a = Alpha::new();
     a.alpha(Env::new(), &mut node);
     node

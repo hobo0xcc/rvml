@@ -1,3 +1,4 @@
-let x = 2 in
-let rec f y = x + y in
-f 2
+let rec make_adder x =
+  let rec adder y = x + y in
+  adder in
+(make_adder 3) 7

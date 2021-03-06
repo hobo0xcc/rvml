@@ -3,37 +3,19 @@ extern crate inkwell;
 extern crate clap;
 extern crate rpds;
 
+
 use rvml::tokenize::*;
 use rvml::parse::*;
 use rvml::typing::*;
 use rvml::alpha::*;
 use rvml::closure::*;
-use rvml::eval::*;
+use rvml::mono::*;
+// use rvml::eval::*;
 use rvml::codegen::*;
 use clap::{Arg, App};
-use io::Write;
 use std::io::{self, Read};
 use std::fs;
 use std::process;
-
-#[allow(dead_code)]
-fn repl(show_type: bool) -> io::Result<()> {
-    loop {
-        let mut source = String::new();
-        print!("repl>> ");
-        io::stdout().flush()?;
-        io::stdin().read_line(&mut source)?;
-        if show_type {
-            let output_ty = typing(parse(tokenize(source.trim()))).1;
-            println!("{}", output_ty);
-        } else {
-            // let output = closure(alpha(typing(parse(tokenize(source.trim()))).0)).1;
-            let output = eval(closure(alpha(typing(parse(tokenize(source.trim()))).0)));
-            // let output = eval(alpha(typing(parse(tokenize(source.trim()))).0));
-            println!("{:?}", output.unwrap());
-        }
-    }
-}
 
 fn read_source(name: &str) -> String {
     let file_opt = fs::File::open(name);
@@ -67,6 +49,9 @@ fn main() -> io::Result<()> {
                                .short("t")
                                .long("show-type")
                                .help("show type"))
+                            .arg(Arg::with_name("AST")
+                                .long("ast")
+                                .help("Print AST"))
                             .arg(Arg::with_name("INPUT")
                                .help("Input file")
                                // .required(true)
@@ -76,15 +61,7 @@ fn main() -> io::Result<()> {
                                 .short("o")
                                 .long("output")
                                 .takes_value(true))
-                            .arg(Arg::with_name("REPL")
-                                .help("repl")
-                                .long("repl"))
                           .get_matches();
-
-    if matches.is_present("REPL") {
-        repl(matches.is_present("SHOW_TYPE"))?;
-        return Ok(());
-    }
 
     let name = matches.value_of("INPUT").unwrap();
     let source = read_source(name);
@@ -92,16 +69,24 @@ fn main() -> io::Result<()> {
         println!("{}", typing(parse(tokenize(&source))).1);
         return Ok(());
     }
+    if matches.is_present("AST") {
+        let res = parse(tokenize(&source));
+        println!("{:?}", res);
+        return Ok(())
+    }
+
     codegen(
-        closure(
-            alpha(
-                typing(
-                    parse(
-                        tokenize(
-                            &source
+        mono(
+            closure(
+                alpha(
+                    typing(
+                        parse(
+                            tokenize(
+                                &source
+                            )
                         )
-                    )
-                ).0,
+                    ).0,
+                ),
             ),
         ),
         matches.value_of("OUTPUT").unwrap_or("main.o").to_string(),

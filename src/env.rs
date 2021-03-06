@@ -68,7 +68,7 @@ where T: Clone, K: Hash + Eq + Clone {
     }
 }
 
-#[derive(Clone, Debug)]
+#[derive(Clone, Debug, PartialEq)]
 pub struct DeBruijn<T> {
     item: Option<Rc<T>>,
     prev: Option<Rc<DeBruijn<T>>>,
