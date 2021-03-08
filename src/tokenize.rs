@@ -1,7 +1,7 @@
 use combine::parser::char::*;
+use combine::parser::repeat::*;
 use combine::stream::position;
 use combine::*;
-use combine::parser::repeat::*;
 use std::fmt;
 use std::{process, unimplemented};
 

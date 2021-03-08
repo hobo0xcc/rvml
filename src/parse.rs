@@ -239,7 +239,7 @@ impl Parser {
             self.expect(&Token::RParen);
             res = Node::Get(Box::new(res), Box::new(expr));
         }
-    
+
         Some(res)
     }
 
@@ -410,9 +410,7 @@ impl Parser {
                     }
                     "<-" => {
                         lhs = match lhs {
-                            Node::Get(expr, idx) => {
-                                Node::Put(expr, idx, Box::new(rhs))
-                            },
+                            Node::Get(expr, idx) => Node::Put(expr, idx, Box::new(rhs)),
                             _ => {
                                 println!("Expected Array access: {:?}", lhs);
                                 process::exit(1);

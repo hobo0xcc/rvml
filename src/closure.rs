@@ -347,7 +347,12 @@ impl Closure {
                 let new_idx = self.closure(env.clone(), known.clone(), &**idx);
                 let new_expr = self.closure(env.clone(), known.clone(), &**expr);
 
-                CNode::Put(Box::new(new_array), Box::new(new_idx), Box::new(new_expr), ty.clone())
+                CNode::Put(
+                    Box::new(new_array),
+                    Box::new(new_idx),
+                    Box::new(new_expr),
+                    ty.clone(),
+                )
             }
             Expr {
                 ref lhs,

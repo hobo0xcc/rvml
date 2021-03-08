@@ -119,7 +119,12 @@ impl Mono {
                 let new_expr = self.apply_subst_node(subst, expr);
                 let new_ty = self.apply_subst_type(subst, ty);
 
-                CNode::Put(Box::new(new_array), Box::new(new_idx), Box::new(new_expr), new_ty)
+                CNode::Put(
+                    Box::new(new_array),
+                    Box::new(new_idx),
+                    Box::new(new_expr),
+                    new_ty,
+                )
             }
             CNode::Expr {
                 ref lhs,
@@ -288,9 +293,7 @@ impl Mono {
 
     pub fn apply_subst_type(&self, subst: &Subst, ty: &Type) -> Type {
         match *ty {
-            Type::Array(ref ty) => {
-                Type::Array(Box::new(self.apply_subst_type(subst, &**ty)))
-            }
+            Type::Array(ref ty) => Type::Array(Box::new(self.apply_subst_type(subst, &**ty))),
             Type::Tuple(ref types) => {
                 let mut new_types = Vec::new();
                 for ty in types.iter() {

@@ -33,9 +33,7 @@ impl Type {
             Type::Int => "int".to_string(),
             Type::Float => "float".to_string(),
             Type::Bool => "bool".to_string(),
-            Type::Array(ref ty) => {
-                (&**ty).to_string()
-            }
+            Type::Array(ref ty) => (&**ty).to_string(),
             Type::Tuple(ref types) => {
                 let mut ty_name = types.get(0).unwrap().to_string();
                 for ty in types.iter().skip(1) {
@@ -261,20 +259,18 @@ impl Typing {
         }
         match (t1, t2) {
             (&mut Type::TVar(ref mut tv), &mut ref mut t_)
-            | (&mut ref mut t_, &mut Type::TVar(ref mut tv)) => {
-                match Rc::clone(&tv).get() {
-                    TypeVar::Unbound(ref id, ref _level) => {
-                        if self.occurs_check(&Rc::clone(tv).get(), t_) {
-                            return Err(TypingError::OccursInside);
-                        }
-                        tv.set(self.link_typevar(*id, t_.clone()));
+            | (&mut ref mut t_, &mut Type::TVar(ref mut tv)) => match Rc::clone(&tv).get() {
+                TypeVar::Unbound(ref id, ref _level) => {
+                    if self.occurs_check(&Rc::clone(tv).get(), t_) {
+                        return Err(TypingError::OccursInside);
                     }
-                    TypeVar::Link(ref mut id) => {
-                        let mut linked_ty = self.get_typevar_link(*id).unwrap();
-                        self.unify(t_, &mut linked_ty)?;
-                    }
+                    tv.set(self.link_typevar(*id, t_.clone()));
                 }
-            }
+                TypeVar::Link(ref mut id) => {
+                    let mut linked_ty = self.get_typevar_link(*id).unwrap();
+                    self.unify(t_, &mut linked_ty)?;
+                }
+            },
             (Type::Array(ref mut ty1), Type::Array(ref mut ty2)) => {
                 self.unify(ty1, ty2)?;
             }
@@ -308,7 +304,7 @@ impl Typing {
             _ => {
                 panic!("unmatched");
                 // Err(TypingError::TypeUnmatched)
-            },
+            }
         }
 
         return Ok(());
@@ -324,9 +320,7 @@ impl Typing {
                 }
                 _ => ty.clone(),
             },
-            Type::Array(ref ty) => {
-                Type::Array(Box::new(self.generalize(ty)))
-            }
+            Type::Array(ref ty) => Type::Array(Box::new(self.generalize(ty))),
             Type::Tuple(ref types) => {
                 Type::Tuple(types.iter().map(|ty| self.generalize(ty)).collect())
             }
@@ -448,25 +442,45 @@ impl Typing {
                 let (expr_nd, expr_ty) = self.typing(env.clone(), &**expr)?;
                 let array_ty = Type::Array(Box::new(expr_ty));
 
-                Ok((TypedNode::Array(Box::new(size_nd), Box::new(expr_nd), array_ty.clone()), array_ty))
+                Ok((
+                    TypedNode::Array(Box::new(size_nd), Box::new(expr_nd), array_ty.clone()),
+                    array_ty,
+                ))
             }
             Node::Get(ref array, ref idx) => {
                 let array_tyvar = self.new_typevar();
                 let (array_nd, mut array_ty) = self.typing(env.clone(), &**array)?;
-                self.unify(&mut Type::Array(Box::new(array_tyvar.clone())), &mut array_ty)?;
+                self.unify(
+                    &mut Type::Array(Box::new(array_tyvar.clone())),
+                    &mut array_ty,
+                )?;
                 let (idx_nd, mut idx_ty) = self.typing(env.clone(), &**idx)?;
                 self.unify(&mut Type::Int, &mut idx_ty)?;
 
-                Ok((TypedNode::Get(Box::new(array_nd), Box::new(idx_nd), array_tyvar.clone()), array_tyvar))
+                Ok((
+                    TypedNode::Get(Box::new(array_nd), Box::new(idx_nd), array_tyvar.clone()),
+                    array_tyvar,
+                ))
             }
             Node::Put(ref array, ref idx, ref new_expr) => {
                 let (new_expr_nd, new_expr_ty) = self.typing(env.clone(), &**new_expr)?;
                 let (array_nd, mut array_ty) = self.typing(env.clone(), &**array)?;
                 let (idx_nd, mut idx_ty) = self.typing(env.clone(), &**idx)?;
                 self.unify(&mut Type::Int, &mut idx_ty)?;
-                self.unify(&mut Type::Array(Box::new(new_expr_ty.clone())), &mut array_ty)?;
+                self.unify(
+                    &mut Type::Array(Box::new(new_expr_ty.clone())),
+                    &mut array_ty,
+                )?;
 
-                Ok((TypedNode::Put(Box::new(array_nd), Box::new(idx_nd), Box::new(new_expr_nd), Type::Unit), Type::Unit))
+                Ok((
+                    TypedNode::Put(
+                        Box::new(array_nd),
+                        Box::new(idx_nd),
+                        Box::new(new_expr_nd),
+                        Type::Unit,
+                    ),
+                    Type::Unit,
+                ))
             }
             Node::Expr {
                 ref lhs,
@@ -680,9 +694,7 @@ impl Typing {
             Type::Int => Type::Int,
             Type::Float => Type::Float,
             Type::Bool => Type::Bool,
-            Type::Array(ref ty) => {
-                Type::Array(Box::new(self.deref_ty(ty)))
-            }
+            Type::Array(ref ty) => Type::Array(Box::new(self.deref_ty(ty))),
             Type::Tuple(ref tys) => {
                 let mut new_tys = Vec::new();
                 for ty in tys.iter() {
