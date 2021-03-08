@@ -8,7 +8,7 @@ float float_of_int(char *fv, int n) {
 }
 
 uint8_t print_float(char *fv, float f) {
-    printf("%f", f);
+    printf("%g", f);
 
     return unit;
 }

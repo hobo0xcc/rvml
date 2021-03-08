@@ -867,6 +867,6 @@ pub fn codegen(
     let res = c.codegen(&prog.1, env).into_int_value();
     // let v = c.get_obj_data(res, &Type::Int).into_int_value();
     c.builder.build_return(Some(&res));
-    c.print_ir();
+    // c.print_ir();
     c.gen_objfile(file_name, target_name, target_triple);
 }

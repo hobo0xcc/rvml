@@ -207,6 +207,7 @@ impl Parser {
     }
 
     pub fn simple_expr(&mut self) -> Option<Node> {
+        let mut need_advance = true;
         let mut res = match self.curr() {
             Token::Num(n) => Node::Int(n),
             Token::Float(f) => Node::Float(f),
@@ -218,19 +219,23 @@ impl Parser {
                 match self.curr() {
                     Token::RParen => {
                         self.next();
-                        return Some(Node::Unit);
+                        need_advance = false;
+                        Node::Unit
                     }
                     _ => {
                         let e = self.expr(0);
                         self.expect(&Token::RParen);
-                        return Some(e);
+                        need_advance = false;
+                        e
                     }
                 }
             }
             _ => return None,
         };
 
-        self.next();
+        if need_advance {
+            self.next();
+        }
 
         while self.curr() == Token::Dot {
             self.next();

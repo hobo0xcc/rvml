@@ -1,6 +1,8 @@
 /target
 /work
-/tests
+tests/lib.o
+tests/main.o
+tests/main
 Cargo.lock
 /.idea
 main

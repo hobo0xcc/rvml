@@ -302,8 +302,7 @@ impl Typing {
                 self.unify(&mut *ret1, &mut *ret2)?;
             }
             _ => {
-                panic!("unmatched");
-                // Err(TypingError::TypeUnmatched)
+                return Err(TypingError::TypeUnmatched)
             }
         }
 
