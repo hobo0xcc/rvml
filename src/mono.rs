@@ -99,6 +99,28 @@ impl Mono {
 
                 CNode::Tuple(new_nds, new_ty)
             }
+            CNode::Array(ref size, ref expr, ref ty) => {
+                let new_size = self.apply_subst_node(subst, size);
+                let new_expr = self.apply_subst_node(subst, expr);
+                let new_ty = self.apply_subst_type(subst, ty);
+
+                CNode::Array(Box::new(new_size), Box::new(new_expr), new_ty)
+            }
+            CNode::Get(ref array, ref idx, ref ty) => {
+                let new_array = self.apply_subst_node(subst, array);
+                let new_idx = self.apply_subst_node(subst, idx);
+                let new_ty = self.apply_subst_type(subst, ty);
+
+                CNode::Get(Box::new(new_array), Box::new(new_idx), new_ty)
+            }
+            CNode::Put(ref array, ref idx, ref expr, ref ty) => {
+                let new_array = self.apply_subst_node(subst, array);
+                let new_idx = self.apply_subst_node(subst, idx);
+                let new_expr = self.apply_subst_node(subst, expr);
+                let new_ty = self.apply_subst_type(subst, ty);
+
+                CNode::Put(Box::new(new_array), Box::new(new_idx), Box::new(new_expr), new_ty)
+            }
             CNode::Expr {
                 ref lhs,
                 ref op,
@@ -266,6 +288,9 @@ impl Mono {
 
     pub fn apply_subst_type(&self, subst: &Subst, ty: &Type) -> Type {
         match *ty {
+            Type::Array(ref ty) => {
+                Type::Array(Box::new(self.apply_subst_type(subst, &**ty)))
+            }
             Type::Tuple(ref types) => {
                 let mut new_types = Vec::new();
                 for ty in types.iter() {

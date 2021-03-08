@@ -12,6 +12,9 @@ pub enum CNode {
     Not(Box<CNode>),
     Neg(Box<CNode>),
     Tuple(Vec<CNode>, Type),
+    Array(Box<CNode>, Box<CNode>, Type),
+    Get(Box<CNode>, Box<CNode>, Type),
+    Put(Box<CNode>, Box<CNode>, Box<CNode>, Type),
     Expr {
         lhs: Box<CNode>,
         op: String,
@@ -70,6 +73,9 @@ impl CNode {
             Not(_) => Type::Bool,
             Neg(_) => Type::Int,
             Tuple(_, ref ty) => ty.clone(),
+            Array(_, _, ref ty) => ty.clone(),
+            Get(_, _, ref ty) => ty.clone(),
+            Put(_, _, _, ref ty) => ty.clone(),
             Expr {
                 lhs: _,
                 op: _,
@@ -201,6 +207,15 @@ impl Closure {
 
                 fvs
             }
+            CNode::Array(ref size, ref expr, ref _ty) => {
+                Closure::union(self.fv(&**size), self.fv(&**expr))
+            }
+            CNode::Get(ref array, ref idx, ref _ty) => {
+                Closure::union(self.fv(&**array), self.fv(&**idx))
+            }
+            CNode::Put(ref array, ref idx, ref expr, ref _ty) => {
+                Closure::union(Closure::union(self.fv(array), self.fv(idx)), self.fv(expr))
+            }
             CNode::Expr {
                 ref lhs,
                 op: ref _op,
@@ -315,6 +330,24 @@ impl Closure {
                 }
 
                 CNode::Tuple(new_nds, ty.clone())
+            }
+            Array(ref size, ref expr, ref ty) => {
+                let new_size = self.closure(env.clone(), known.clone(), &**size);
+                let new_expr = self.closure(env.clone(), known.clone(), &**expr);
+
+                CNode::Array(Box::new(new_size), Box::new(new_expr), ty.clone())
+            }
+            Get(ref array, ref idx, ref ty) => {
+                let new_array = self.closure(env.clone(), known.clone(), &**array);
+                let new_idx = self.closure(env.clone(), known.clone(), &**idx);
+                CNode::Get(Box::new(new_array), Box::new(new_idx), ty.clone())
+            }
+            Put(ref array, ref idx, ref expr, ref ty) => {
+                let new_array = self.closure(env.clone(), known.clone(), &**array);
+                let new_idx = self.closure(env.clone(), known.clone(), &**idx);
+                let new_expr = self.closure(env.clone(), known.clone(), &**expr);
+
+                CNode::Put(Box::new(new_array), Box::new(new_idx), Box::new(new_expr), ty.clone())
             }
             Expr {
                 ref lhs,

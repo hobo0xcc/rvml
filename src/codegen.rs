@@ -81,6 +81,12 @@ impl<'ctx> CodeGen<'ctx> {
             Type::Int => IntType(self.context.i32_type()),
             Type::Float => FloatType(self.context.f32_type()),
             Type::Bool => IntType(self.context.bool_type()),
+            Type::Array(ref ty) => {
+                PointerType(self.type_to_llvmty(&**ty).ptr_type(AddressSpace::Generic))
+            }
+            Type::Tuple(ref _tys) => {
+                PointerType(self.create_tuple_type(ty).ptr_type(AddressSpace::Generic))
+            }
             Type::Func { args: _, ret: _ } => {
                 let func_ptr_ty =
                     PointerType(self.create_func_type(ty).ptr_type(AddressSpace::Generic));
@@ -93,9 +99,6 @@ impl<'ctx> CodeGen<'ctx> {
                 closure_ty
                     .ptr_type(AddressSpace::Generic)
                     .as_basic_type_enum()
-            }
-            Type::Tuple(ref _tys) => {
-                PointerType(self.create_tuple_type(ty).ptr_type(AddressSpace::Generic))
             }
             _ => {
                 println!("{}", ty);
@@ -346,6 +349,14 @@ impl<'ctx> CodeGen<'ctx> {
         self.builder.build_return(Some(&func_res));
     }
 
+    pub fn stack_save(&mut self) -> BasicValueEnum<'ctx> {
+        self.builder.build_call(self.get_intrinsic("llvm.stacksave").unwrap(), &[], "tmp").try_as_basic_value().unwrap_left()
+    }
+
+    pub fn stack_restore(&mut self, stack: BasicValueEnum<'ctx>) {
+        self.builder.build_call(self.get_intrinsic("llvm.stackrestore").unwrap(), &[stack], "tmp");
+    }
+
     pub fn codegen_toplevel(&mut self, fundefs: Vec<FunDef>) {
         for fundef in fundefs.iter() {
             self.codegen_declare(fundef);
@@ -414,6 +425,52 @@ impl<'ctx> CodeGen<'ctx> {
                 }
 
                 BasicValueEnum::PointerValue(tuple_ptr)
+            }
+            Array(ref size, ref expr, ref _ty) => {
+                let size_val = self.codegen(size, env.clone());
+                let expr_val = self.codegen(expr, env.clone());
+                let array = self.builder.build_array_malloc(expr_val.get_type(), size_val.into_int_value(), "tmp").unwrap();
+
+                let stack = self.stack_save();
+                let counter = self.builder.build_alloca(self.context.i32_type(), "tmp");
+                self.builder.build_store(counter, self.context.i32_type().const_int(0, false));
+                let before_bb = self.builder.get_insert_block().unwrap();
+                let parent_func = before_bb.get_parent().unwrap();
+                let array_bb = self.context.append_basic_block(parent_func, "tmp");
+                let cont_bb = self.context.append_basic_block(parent_func, "tmp");
+
+                self.builder.build_unconditional_branch(array_bb);
+
+                self.builder.position_at_end(array_bb);
+                let counter_val = self.builder.build_load(counter, "tmp");
+                let elem = unsafe {self.builder.build_in_bounds_gep(array, &[counter_val.into_int_value()], "tmp")};
+                self.builder.build_store(elem, expr_val);
+                let next_counter_val = self.builder.build_int_add(counter_val.into_int_value(), self.context.i32_type().const_int(1, false), "tmp");
+                self.builder.build_store(counter, next_counter_val);
+                let cond = self.builder.build_int_compare(IntPredicate::SLT, next_counter_val, size_val.into_int_value(), "tmp");
+                self.builder.build_conditional_branch(cond, array_bb, cont_bb);
+                
+                self.builder.position_at_end(cont_bb);
+                self.stack_restore(stack);
+
+                array.as_basic_value_enum()
+            }
+            Get(ref array, ref idx, ref _ty) => {
+                let array_val = self.codegen(&**array, env.clone());
+                let idx_val = self.codegen(&**idx, env.clone());
+
+                let array_elem_ptr = unsafe {self.builder.build_in_bounds_gep(array_val.into_pointer_value(), &[idx_val.into_int_value()], "tmp")};
+                let res = self.builder.build_load(array_elem_ptr, "tmp");
+                res
+            }
+            Put(ref array, ref idx, ref expr, ref _ty) => {
+                let array_val = self.codegen(&**array, env.clone());
+                let idx_val = self.codegen(&**idx, env.clone());
+                let expr_val = self.codegen(&**expr, env.clone());
+
+                let array_elem_ptr = unsafe {self.builder.build_in_bounds_gep(array_val.into_pointer_value(), &[idx_val.into_int_value()], "tmp")};
+                self.builder.build_store(array_elem_ptr, expr_val);
+                self.context.i8_type().const_int(0, false).as_basic_value_enum()
             }
             Expr {
                 ref lhs,

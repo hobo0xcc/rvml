@@ -1,6 +1,7 @@
 use combine::parser::char::*;
 use combine::stream::position;
 use combine::*;
+use combine::parser::repeat::*;
 use std::fmt;
 use std::{process, unimplemented};
 
@@ -13,6 +14,7 @@ pub enum Token {
     RParen,
     Comma,
     SemiColon,
+    Dot,
     If,
     Then,
     Else,
@@ -21,6 +23,7 @@ pub enum Token {
     Rec,
     True,
     False,
+    Array,
     Ident(String),
     Nop,
     Eof,
@@ -37,6 +40,7 @@ impl fmt::Display for Token {
             RParen => write!(f, "RParen"),
             Comma => write!(f, "Comma"),
             SemiColon => write!(f, "SemiColon"),
+            Dot => write!(f, "Dot"),
             If => write!(f, "If"),
             Then => write!(f, "Then"),
             Else => write!(f, "Else"),
@@ -45,6 +49,7 @@ impl fmt::Display for Token {
             Rec => write!(f, "Rec"),
             True => write!(f, "True"),
             False => write!(f, "False"),
+            Array => write!(f, "Array"),
             Ident(ref s) => write!(f, "Ident({})", s),
             Nop => write!(f, "Nop"),
             Eof => write!(f, "Eof"),
@@ -81,7 +86,7 @@ parser! {
         (
             many1::<String, _, _>(digit()),
             token('.'),
-            digit(),
+            many1::<String, _, _>(digit()),
         ).map(|(int, _, dec)| Token::Float(format!("{}.{}", int, dec).parse::<f32>().unwrap()))
     }
 }
@@ -93,6 +98,7 @@ parser! {
         Input::Error: ParseError<char, Input::Range, Input::Position>,
     ] {
         choice((
+            attempt((token('<'), token('-'))).map(|_| Token::Op("<-".to_string())),
             attempt((token('<'), token('='))).map(|_| Token::Op("<=".to_string())),
             attempt((token('>'), token('='))).map(|_| Token::Op(">=".to_string())),
             attempt((token('<'), token('>'))).map(|_| Token::Op("<>".to_string())),
@@ -107,6 +113,7 @@ parser! {
             token('=').map(|_| Token::Op("=".to_string())),
             token('<').map(|_| Token::Op("<".to_string())),
             token('>').map(|_| Token::Op(">".to_string())),
+            token('.').map(|_| Token::Dot),
         ))
     }
 }
@@ -133,8 +140,8 @@ parser! {
         Input::Error: ParseError<char, Input::Range, Input::Position>,
     ] {
         (
-            many1::<String, _, _>(satisfy(|c: char| c.is_alphabetic() || c == '_' || c == '.')),
-            many::<String, _, _>(satisfy(|c: char| c.is_alphanumeric() || c == '_' || c == '.'))
+            many1::<String, _, _>(satisfy(|c: char| c.is_alphabetic() || c == '_')),
+            many::<String, _, _>(satisfy(|c: char| c.is_alphanumeric() || c == '_'))
         ).map(|(s, t)| match format!("{}{}", s, t).as_str() {
             "if" => Token::If,
             "then" => Token::Then,
@@ -144,15 +151,36 @@ parser! {
             "rec" => Token::Rec,
             "true" => Token::True,
             "false" => Token::False,
+            "Array" => {
+                Token::Array
+            },
             "not" => Token::Op("not".to_string()),
             _ => Token::Ident(format!("{}{}", s, t)),
         })
     }
 }
 
+parser! {
+    fn comment[Input]()(Input) -> Token
+    where [
+        Input: Stream<Token = char>,
+        Input::Error: ParseError<char, Input::Range, Input::Position>,
+    ] {
+        // between((token('('), token('*')), (token('*'), token(')')), many(any())).map(|_: String| Token::Nop)
+        (
+            token('('),
+            token('*'),
+            take_until((token('*'), token(')'))),
+            token('*'),
+            token(')'),
+        ).map(|_: (char, char, String, char, char)| Token::Nop)
+    }
+}
+
 pub fn tokenize(s: &str) -> Vec<Token> {
     println!("Tokenize");
     let mut lexer = many1::<Vec<Token>, _, _>(choice((
+        attempt(comment()),
         attempt(float_num_token()),
         attempt(num_token()),
         op_token(),

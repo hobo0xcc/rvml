@@ -12,6 +12,9 @@ pub enum Node {
     Not(Box<Node>),
     Neg(Box<Node>),
     Tuple(Vector<Node>),
+    Array(Box<Node>, Box<Node>),
+    Get(Box<Node>, Box<Node>),
+    Put(Box<Node>, Box<Node>, Box<Node>),
     Expr {
         lhs: Box<Node>,
         op: String,
@@ -104,8 +107,8 @@ impl Parser {
 
     pub fn prefix_bp(&self, op: &str) -> ((), usize) {
         match op {
-            "not" => ((), 17),
-            "-" => ((), 15),
+            "not" => ((), 19),
+            "-" => ((), 17),
             "if" => ((), 5),
             "let" => ((), 1),
             _ => {
@@ -118,10 +121,11 @@ impl Parser {
     pub fn infix_bp(&self, op: &str) -> Option<(usize, usize)> {
         let res = match op {
             ";" => (4, 3),
-            "," => (7, 8),
-            "<" | ">" | "<=" | ">=" | "=" | "<>" => (9, 10),
-            "+" | "-" | "+." | "-." => (11, 12),
-            "*" | "/" | "*." | "/." => (13, 14),
+            "<-" => (8, 7),
+            "," => (9, 10),
+            "<" | ">" | "<=" | ">=" | "=" | "<>" => (11, 12),
+            "+" | "-" | "+." | "-." => (13, 14),
+            "*" | "/" | "*." | "/." => (15, 16),
             _ => return None,
         };
         Some(res)
@@ -203,7 +207,7 @@ impl Parser {
     }
 
     pub fn simple_expr(&mut self) -> Option<Node> {
-        let res = match self.curr() {
+        let mut res = match self.curr() {
             Token::Num(n) => Node::Int(n),
             Token::Float(f) => Node::Float(f),
             Token::Ident(name) => Node::VarExpr(name),
@@ -227,6 +231,15 @@ impl Parser {
         };
 
         self.next();
+
+        while self.curr() == Token::Dot {
+            self.next();
+            self.expect(&Token::LParen);
+            let expr = self.expr(0);
+            self.expect(&Token::RParen);
+            res = Node::Get(Box::new(res), Box::new(expr));
+        }
+    
         Some(res)
     }
 
@@ -322,6 +335,17 @@ impl Parser {
                     }
                 }
             }
+            Token::Array => {
+                self.next();
+                self.expect(&Token::Dot);
+                self.expect_fn(|tok| match *tok {
+                    Token::Ident(ref s) => s == "create" || s == "make",
+                    _ => false,
+                });
+                let size = self.simple_expr().unwrap();
+                let expr = self.simple_expr().unwrap();
+                Node::Array(Box::new(size), Box::new(expr))
+            }
             _ => match self.simple_expr() {
                 Some(nd) => {
                     if let Some(args) = self.actual_args() {
@@ -383,6 +407,17 @@ impl Parser {
                             }
                         };
                         lhs = Node::Tuple(elems);
+                    }
+                    "<-" => {
+                        lhs = match lhs {
+                            Node::Get(expr, idx) => {
+                                Node::Put(expr, idx, Box::new(rhs))
+                            },
+                            _ => {
+                                println!("Expected Array access: {:?}", lhs);
+                                process::exit(1);
+                            }
+                        };
                     }
                     ";" => {
                         lhs = Node::LetExpr {

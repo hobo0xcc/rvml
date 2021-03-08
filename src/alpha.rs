@@ -45,6 +45,19 @@ impl Alpha {
                     self.alpha(env.clone(), nd);
                 }
             }
+            Array(ref mut size, ref mut expr, ref _ty) => {
+                self.alpha(env.clone(), &mut **size);
+                self.alpha(env.clone(), &mut **expr);
+            }
+            Get(ref mut array, ref mut idx, ref _ty) => {
+                self.alpha(env.clone(), &mut **array);
+                self.alpha(env.clone(), &mut **idx);
+            }
+            Put(ref mut array, ref mut idx, ref mut new_expr, ref _ty) => {
+                self.alpha(env.clone(), &mut **array);
+                self.alpha(env.clone(), &mut **idx);
+                self.alpha(env.clone(), &mut **new_expr);
+            }
             Expr {
                 ref mut lhs,
                 op: ref _op,
