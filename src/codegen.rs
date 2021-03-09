@@ -79,7 +79,7 @@ impl<'ctx> CodeGen<'ctx> {
         match *ty {
             Type::Unit => IntType(self.context.i8_type()),
             Type::Int => IntType(self.context.i32_type()),
-            Type::Float => FloatType(self.context.f64_type()),
+            Type::Float => FloatType(self.context.f32_type() /* self.context.f64_type() */),
             Type::Bool => IntType(self.context.bool_type()),
             Type::Array(ref ty) => {
                 PointerType(self.type_to_llvmty(&**ty).ptr_type(AddressSpace::Generic))

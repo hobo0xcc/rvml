@@ -4,36 +4,36 @@
 
 uint8_t unit = 0;
 
-double mincaml_sin(char *fv, double f) {
-    return sin(f);
+float mincaml_sin(char *fv, float f) {
+    return sinf(f);
 }
 
-double mincaml_cos(char *fv, double f) {
-    return cos(f);
+float mincaml_cos(char *fv, float f) {
+    return cosf(f);
 }
 
-double mincaml_sqrt(char *fv, double f) {
-    return sqrt(f);
+float mincaml_sqrt(char *fv, float f) {
+    return sqrtf(f);
 }
 
-double mincaml_abs_float(char *fv, double f) {
-    return fabs(f);
+float mincaml_abs_float(char *fv, float f) {
+    return fabsf(f);
 }
 
-int mincaml_int_of_float(char *fv, double f) {
-    return trunc(f);
+int mincaml_int_of_float(char *fv, float f) {
+    return truncf(f);
 }
 
-int mincaml_truncate(char *fv, double f) {
+int mincaml_truncate(char *fv, float f) {
     return mincaml_int_of_float(fv, f);
 }
 
 float mincaml_float_of_int(char *fv, int n) {
-    return (double)n;
+    return (float)n;
 }
 
-uint8_t mincaml_print_float(char *fv, double f) {
-    printf("%lg", (double)f);
+uint8_t mincaml_print_float(char *fv, float f) {
+    printf("%g", (float)f);
 
     return unit;
 }
