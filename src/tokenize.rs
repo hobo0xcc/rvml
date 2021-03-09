@@ -86,7 +86,7 @@ parser! {
         (
             many1::<String, _, _>(digit()),
             token('.'),
-            many1::<String, _, _>(digit()),
+            many::<String, _, _>(digit()),
         ).map(|(int, _, dec)| Token::Float(format!("{}.{}", int, dec).parse::<f32>().unwrap()))
     }
 }

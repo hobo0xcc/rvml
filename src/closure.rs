@@ -11,6 +11,7 @@ pub enum CNode {
     VarExpr(String, Type, Subst, bool),
     Not(Box<CNode>),
     Neg(Box<CNode>),
+    FNeg(Box<CNode>),
     Tuple(Vec<CNode>, Type),
     Array(Box<CNode>, Box<CNode>, Type),
     Get(Box<CNode>, Box<CNode>, Type),
@@ -72,6 +73,7 @@ impl CNode {
             VarExpr(_, ref ty, _, _) => ty.clone(),
             Not(_) => Type::Bool,
             Neg(_) => Type::Int,
+            FNeg(_) => Type::Float,
             Tuple(_, ref ty) => ty.clone(),
             Array(_, _, ref ty) => ty.clone(),
             Get(_, _, ref ty) => ty.clone(),
@@ -199,6 +201,7 @@ impl Closure {
             }
             CNode::Not(ref expr) => self.fv(&**expr),
             CNode::Neg(ref expr) => self.fv(&**expr),
+            CNode::FNeg(ref expr) => self.fv(&**expr),
             CNode::Tuple(ref nds, ref _ty) => {
                 let mut fvs = Known::new();
                 for nd in nds.iter() {
@@ -323,6 +326,7 @@ impl Closure {
             }
             Not(ref expr) => CNode::Not(Box::new(self.closure(env, known, &**expr))),
             Neg(ref expr) => CNode::Neg(Box::new(self.closure(env, known, &**expr))),
+            FNeg(ref expr) => CNode::FNeg(Box::new(self.closure(env, known, &**expr))),
             Tuple(ref nds, ref ty) => {
                 let mut new_nds = Vec::new();
                 for nd in nds.iter() {
@@ -509,9 +513,12 @@ impl Closure {
                 let mut is_known;
                 // let mut label_name: String = String::new();
                 match new_func {
-                    CNode::VarExpr(ref name, ref _ty, ref _subst, ref _is_extern) => {
+                    CNode::VarExpr(ref name, ref _ty, ref _subst, ref is_extern) => {
                         is_known = known.contains(name);
                         if is_primitive(name) {
+                            is_known = true;
+                        }
+                        if *is_extern {
                             is_known = true;
                         }
                         // label_name = name.to_string();

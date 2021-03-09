@@ -23,6 +23,11 @@ run_test() {
     fi
 }
 
+if [ ! -e "../target/debug/rvml" ]; then
+    echo "You need to build rvml"
+    exit 1
+fi
+
 for f in *.ml
 do
     run_test "$f"

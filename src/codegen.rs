@@ -79,7 +79,7 @@ impl<'ctx> CodeGen<'ctx> {
         match *ty {
             Type::Unit => IntType(self.context.i8_type()),
             Type::Int => IntType(self.context.i32_type()),
-            Type::Float => FloatType(self.context.f32_type()),
+            Type::Float => FloatType(self.context.f64_type()),
             Type::Bool => IntType(self.context.bool_type()),
             Type::Array(ref ty) => {
                 PointerType(self.type_to_llvmty(&**ty).ptr_type(AddressSpace::Generic))
@@ -414,6 +414,11 @@ impl<'ctx> CodeGen<'ctx> {
                 let res = self.builder.build_int_neg(expr_val.into_int_value(), "tmp");
                 IntValue(res)
             }
+            FNeg(ref expr) => {
+                let expr_val = self.codegen(expr, env);
+                let res = self.builder.build_float_neg(expr_val.into_float_value(), "tmp");
+                FloatValue(res)
+            }
             Tuple(ref exprs, ref ty) => {
                 let mut values = Vec::new();
                 for expr in exprs.iter() {
@@ -720,7 +725,7 @@ impl<'ctx> CodeGen<'ctx> {
                     self.builder.build_store(ptr, data);
                     env_child.set(name.to_string(), PointerValue(ptr));
                 }
-                self.builder.build_free(tuple_ptr);
+                // self.builder.build_free(tuple_ptr);
 
                 let new_env = Rc::new(RefCell::new(env_child));
                 let res = self.codegen(second_expr, new_env);
@@ -824,7 +829,14 @@ impl<'ctx> CodeGen<'ctx> {
                     result
                 } else {
                     let func_llty = self.create_func_type(func_ty);
-                    let new_func = self.module.add_function(&name, func_llty, None);
+                    let func = if is_primitive(&name) {
+                        match self.module.get_function(&format!("mincaml_{}", name)) {
+                            Some(f) => f,
+                            _ => self.module.add_function(&format!("mincaml_{}", name), func_llty, None)
+                        }
+                    } else {
+                        self.module.add_function(&name, func_llty, None)
+                    };
 
                     let mut arg_values = Vec::new();
                     let i8_ptr_null = self
@@ -839,7 +851,7 @@ impl<'ctx> CodeGen<'ctx> {
 
                     let result = self
                         .builder
-                        .build_call(new_func, arg_values.as_slice(), "tmp")
+                        .build_call(func, arg_values.as_slice(), "tmp")
                         .try_as_basic_value()
                         .unwrap_left();
                     result

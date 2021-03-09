@@ -108,6 +108,7 @@ pub enum TypedNode {
     VarExtExpr(String, Type),
     Not(Box<TypedNode>),
     Neg(Box<TypedNode>),
+    FNeg(Box<TypedNode>),
     Tuple(Vec<TypedNode>, Type),
     Array(Box<TypedNode>, Box<TypedNode>, Type),
     Get(Box<TypedNode>, Box<TypedNode>, Type),
@@ -352,7 +353,7 @@ impl Typing {
                     self.instantiate_loop(subst, &ty)
                 }
                 _ => (ty.clone(), subst),
-            },
+            }
             Type::Array(ref ty) => {
                 let (ty, subst) = self.instantiate_loop(subst, ty);
                 (Type::Array(Box::new(ty)), subst)
@@ -422,6 +423,12 @@ impl Typing {
                 self.unify(&mut expr_ty, &mut Type::Int)?;
                 let result_ty = Type::Int;
                 Ok((TypedNode::Neg(Box::new(expr_nd)), result_ty))
+            }
+            Node::FNeg(ref expr) => {
+                let (expr_nd, mut expr_ty) = self.typing(env.clone(), &*expr)?;
+                self.unify(&mut expr_ty, &mut Type::Float)?;
+                let result_ty = Type::Float;
+                Ok((TypedNode::FNeg(Box::new(expr_nd)), result_ty))
             }
             Node::Tuple(ref exprs) => {
                 let mut typed_exprs = Vec::new();
@@ -737,6 +744,9 @@ impl Typing {
             TypedNode::Neg(ref mut expr) => {
                 self.deref_node(&mut **expr);
             }
+            TypedNode::FNeg(ref mut expr) => {
+                self.deref_node(&mut **expr);
+            }
             TypedNode::Tuple(ref mut tynds, ref mut ty) => {
                 *ty = self.deref_ty(ty);
                 for tynd in tynds.iter_mut() {
@@ -841,7 +851,8 @@ impl Typing {
 }
 
 static PRIMITIVES: &'static [&'static str] =
-    &["float_of_int", "print_float", "print_int", "print_newline"];
+    &["float_of_int", "print_float", "print_int", "print_newline",
+    "truncate", "int_of_float", "abs_float", "sqrt", "cos", "sin"];
 
 pub fn is_primitive(name: &str) -> bool {
     for prim in PRIMITIVES.iter() {
@@ -870,11 +881,41 @@ pub fn primitive_func(env: Env) -> Env {
         args: vec![Type::Unit],
         ret: Box::new(Type::Unit),
     };
+    let truncate_ty = Type::Func {
+        args: vec![Type::Float],
+        ret: Box::new(Type::Int)
+    };
+    let int_of_float_ty = Type::Func {
+        args: vec![Type::Float],
+        ret: Box::new(Type::Int),
+    };
+    let abs_float_ty = Type::Func {
+        args: vec![Type::Float],
+        ret: Box::new(Type::Float),
+    };
+    let sqrt_ty = Type::Func {
+        args: vec![Type::Float],
+        ret: Box::new(Type::Float),
+    };
+    let cos_ty = Type::Func {
+        args: vec![Type::Float],
+        ret: Box::new(Type::Float),
+    };
+    let sin_ty = Type::Func {
+        args: vec![Type::Float],
+        ret: Box::new(Type::Float),
+    };
 
     env.add(("float_of_int".to_string(), float_of_int_ty))
         .add(("print_float".to_string(), print_float))
         .add(("print_int".to_string(), print_int_ty))
         .add(("print_newline".to_string(), print_newline_ty))
+        .add(("truncate".to_string(), truncate_ty))
+        .add(("int_of_float".to_string(), int_of_float_ty))
+        .add(("abs_float".to_string(), abs_float_ty))
+        .add(("sqrt".to_string(), sqrt_ty))
+        .add(("cos".to_string(), cos_ty))
+        .add(("sin".to_string(), sin_ty))
 }
 
 pub fn typing(node: Node) -> (TypedNode, Type) {

@@ -1,7 +1,9 @@
 use crate::closure::*;
 use crate::typing::{Subst, Type, TypeVar};
-use rpds::HashTrieSet;
+use rpds::{HashTrieSet, HashTrieMap};
 use std::collections::HashMap;
+
+type Env = HashTrieMap<String, Type>;
 
 // Monomorphization
 pub struct Mono {
@@ -25,6 +27,10 @@ impl Mono {
         self.func_map.get(name).unwrap().clone()
     }
 
+    pub fn is_function(&self, name: &String) -> bool {
+        self.func_map.contains_key(name)
+    }
+
     pub fn synthesize_subst(&self, s1: &Subst, s2: &Subst) -> Subst {
         let mut new_subst = Subst::new();
         for (key, val) in s1.iter() {
@@ -38,6 +44,7 @@ impl Mono {
     }
 
     pub fn duplicate(&mut self, subst: &Subst, name: &String) -> (String, Type) {
+        let mut new_env = Env::new();
         let from_func = self.get_func(name);
         let (ref name, ref ty) = from_func.name;
         let new_ty = self.apply_subst_type(subst, ty);
@@ -45,17 +52,28 @@ impl Mono {
         if self.generated.contains(&new_name) {
             return (new_name, new_ty);
         }
+        new_env = new_env.insert(name.clone(), ty.clone());
         self.generated = self.generated.insert(new_name.clone());
         let mut new_args = Vec::new();
-        let new_body = self.apply_subst_node(subst, &from_func.body);
         for (arg_name, arg_ty) in from_func.args.iter() {
-            new_args.push((arg_name.to_string(), self.apply_subst_type(subst, arg_ty)));
+            let ty = self.apply_subst_type(subst, arg_ty);
+            new_args.push((arg_name.to_string(), ty.clone()));
+            new_env = new_env.insert(arg_name.to_string(), ty);
         }
 
         let mut new_formal_fv = Vec::new();
         for (name, ty) in from_func.formal_fv.iter() {
-            new_formal_fv.push((name.to_string(), self.apply_subst_type(subst, ty)));
+            let fv_ty = self.apply_subst_type(subst, ty);
+            let fv_name = if self.is_function(name) {
+                self.mangle_name(name, &fv_ty)
+            } else {
+                name.to_string()
+            };
+            new_formal_fv.push((fv_name.clone(), fv_ty.clone()));
+            new_env = new_env.insert(fv_name, fv_ty);
         }
+
+        let new_body = self.apply_subst_node(new_env, subst, &from_func.body);
 
         let new_fundef = FunDef {
             name: (new_name.clone(), new_ty.clone()),
@@ -70,7 +88,7 @@ impl Mono {
         (new_name, new_ty)
     }
 
-    pub fn apply_subst_node(&mut self, subst: &Subst, node: &CNode) -> CNode {
+    pub fn apply_subst_node(&mut self, env: Env, subst: &Subst, node: &CNode) -> CNode {
         match *node {
             CNode::VarExpr(ref name, ref ty, ref subst_var, ref is_extern) => {
                 let new_ty = self.apply_subst_type(&subst, ty);
@@ -88,35 +106,36 @@ impl Mono {
 
                 CNode::VarExpr(new_name, new_ty, subst_var.clone(), *is_extern)
             }
-            CNode::Not(ref expr) => CNode::Not(Box::new(self.apply_subst_node(subst, &**expr))),
-            CNode::Neg(ref expr) => CNode::Neg(Box::new(self.apply_subst_node(subst, &**expr))),
+            CNode::Not(ref expr) => CNode::Not(Box::new(self.apply_subst_node(env, subst, &**expr))),
+            CNode::Neg(ref expr) => CNode::Neg(Box::new(self.apply_subst_node(env, subst, &**expr))),
+            CNode::FNeg(ref expr) => CNode::FNeg(Box::new(self.apply_subst_node(env, subst, &**expr))),
             CNode::Tuple(ref nds, ref ty) => {
                 let new_ty = self.apply_subst_type(subst, ty);
                 let mut new_nds = Vec::new();
                 for nd in nds.iter() {
-                    new_nds.push(self.apply_subst_node(subst, nd));
+                    new_nds.push(self.apply_subst_node(env.clone(), subst, nd));
                 }
 
                 CNode::Tuple(new_nds, new_ty)
             }
             CNode::Array(ref size, ref expr, ref ty) => {
-                let new_size = self.apply_subst_node(subst, size);
-                let new_expr = self.apply_subst_node(subst, expr);
+                let new_size = self.apply_subst_node(env.clone(), subst, size);
+                let new_expr = self.apply_subst_node(env.clone(), subst, expr);
                 let new_ty = self.apply_subst_type(subst, ty);
 
                 CNode::Array(Box::new(new_size), Box::new(new_expr), new_ty)
             }
             CNode::Get(ref array, ref idx, ref ty) => {
-                let new_array = self.apply_subst_node(subst, array);
-                let new_idx = self.apply_subst_node(subst, idx);
+                let new_array = self.apply_subst_node(env.clone(), subst, array);
+                let new_idx = self.apply_subst_node(env.clone(), subst, idx);
                 let new_ty = self.apply_subst_type(subst, ty);
 
                 CNode::Get(Box::new(new_array), Box::new(new_idx), new_ty)
             }
             CNode::Put(ref array, ref idx, ref expr, ref ty) => {
-                let new_array = self.apply_subst_node(subst, array);
-                let new_idx = self.apply_subst_node(subst, idx);
-                let new_expr = self.apply_subst_node(subst, expr);
+                let new_array = self.apply_subst_node(env.clone(), subst, array);
+                let new_idx = self.apply_subst_node(env.clone(), subst, idx);
+                let new_expr = self.apply_subst_node(env.clone(), subst, expr);
                 let new_ty = self.apply_subst_type(subst, ty);
 
                 CNode::Put(
@@ -132,8 +151,8 @@ impl Mono {
                 ref rhs,
                 ref ty,
             } => {
-                let new_lhs = self.apply_subst_node(subst, &**lhs);
-                let new_rhs = self.apply_subst_node(subst, &**rhs);
+                let new_lhs = self.apply_subst_node(env.clone(), subst, &**lhs);
+                let new_rhs = self.apply_subst_node(env.clone(), subst, &**rhs);
                 let new_ty = self.apply_subst_type(subst, ty);
 
                 CNode::Expr {
@@ -149,9 +168,9 @@ impl Mono {
                 ref else_body,
                 ref ty,
             } => {
-                let new_cond = self.apply_subst_node(subst, &**cond);
-                let new_then_body = self.apply_subst_node(subst, &**then_body);
-                let new_else_body = self.apply_subst_node(subst, &**else_body);
+                let new_cond = self.apply_subst_node(env.clone(), subst, &**cond);
+                let new_then_body = self.apply_subst_node(env.clone(), subst, &**then_body);
+                let new_else_body = self.apply_subst_node(env.clone(), subst, &**else_body);
                 let new_ty = self.apply_subst_type(subst, ty);
 
                 CNode::IfExpr {
@@ -165,13 +184,15 @@ impl Mono {
                 ref name,
                 ref first_expr,
                 ref second_expr,
-                ref ty,
+                ty: ref _ty,
             } => {
                 let (ref id, ref id_ty) = name;
-                let new_name = (id.to_string(), self.apply_subst_type(subst, id_ty));
-                let new_first_expr = self.apply_subst_node(subst, &**first_expr);
-                let new_second_expr = self.apply_subst_node(subst, &**second_expr);
-                let new_ty = self.apply_subst_type(subst, ty);
+                let ty = self.apply_subst_type(subst, id_ty);
+                let new_name = (id.to_string(), ty.clone());
+                let new_first_expr = self.apply_subst_node(env.clone(), subst, &**first_expr);
+                let second_env = env.insert(id.to_string(), ty.clone());
+                let new_second_expr = self.apply_subst_node(second_env, subst, &**second_expr);
+                let new_ty = self.apply_subst_type(subst, &ty);
 
                 CNode::LetExpr {
                     name: new_name,
@@ -188,11 +209,14 @@ impl Mono {
                 ref ty,
             } => {
                 let mut new_names = Vec::new();
+                let mut second_env = env.clone();
                 for (id, id_ty) in names.iter() {
-                    new_names.push((id.to_string(), self.apply_subst_type(subst, id_ty)));
+                    let ty = self.apply_subst_type(subst, id_ty);
+                    new_names.push((id.to_string(), ty.clone()));
+                    second_env = second_env.insert(id.to_string(), ty);
                 }
-                let new_first_expr = self.apply_subst_node(subst, &**first_expr);
-                let new_second_expr = self.apply_subst_node(subst, &**second_expr);
+                let new_first_expr = self.apply_subst_node(env.clone(), subst, &**first_expr);
+                let new_second_expr = self.apply_subst_node(second_env, subst, &**second_expr);
                 let new_tuple_ty = self.apply_subst_type(subst, tuple_ty);
                 let new_ty = self.apply_subst_type(subst, ty);
 
@@ -212,8 +236,9 @@ impl Mono {
                 ref ty,
             } => {
                 let (ref id, ref id_ty) = name;
+                let new_env = env.insert(id.to_string(), id_ty.clone());
                 let poly_dups_backup = self.dups.get(id).unwrap_or(&vec![]).clone();
-                let new_second_expr = self.apply_subst_node(subst, &**second_expr);
+                let new_second_expr = self.apply_subst_node(new_env, subst, &**second_expr);
                 let poly_dups = self.dups.get(id).unwrap_or(&vec![]).clone();
 
                 let dup_map: HashMap<String, Type> = poly_dups_backup.into_iter().collect();
@@ -237,10 +262,21 @@ impl Mono {
                     )
                 };
 
+                let mut new_fv = Vec::new();
+                for fv in actual_fv.iter() {
+                    let ty = self.apply_subst_type(subst, env.get(fv).unwrap());
+                    let name = if self.is_function(fv) {
+                        self.mangle_name(fv, &ty)
+                    } else {
+                        fv.to_string()
+                    };
+                    new_fv.push(name);
+                }
+
                 CNode::MakeCls {
                     name: (new_name_id, new_name_ty),
                     dups: Some(new_dups),
-                    actual_fv: actual_fv.clone(),
+                    actual_fv: new_fv,
                     second_expr: Box::new(new_second_expr),
                     ty: new_ty,
                 }
@@ -251,10 +287,10 @@ impl Mono {
                 ref func_ty,
                 ref ty,
             } => {
-                let new_func = self.apply_subst_node(subst, &**func);
+                let new_func = self.apply_subst_node(env.clone(), subst, &**func);
                 let mut new_args = Vec::new();
                 for arg in args.iter() {
-                    new_args.push(self.apply_subst_node(subst, arg));
+                    new_args.push(self.apply_subst_node(env.clone(), subst, arg));
                 }
                 let new_func_ty = self.apply_subst_type(subst, func_ty);
                 let new_ty = self.apply_subst_type(subst, ty);
@@ -272,10 +308,10 @@ impl Mono {
                 ref func_ty,
                 ref ty,
             } => {
-                let new_func = self.apply_subst_node(subst, &**func);
+                let new_func = self.apply_subst_node(env.clone(), subst, &**func);
                 let mut new_args = Vec::new();
                 for arg in args.iter() {
-                    new_args.push(self.apply_subst_node(subst, arg));
+                    new_args.push(self.apply_subst_node(env.clone(), subst, arg));
                 }
                 let new_func_ty = self.apply_subst_type(subst, func_ty);
                 let new_ty = self.apply_subst_type(subst, ty);
@@ -316,7 +352,13 @@ impl Mono {
             }
             Type::QVar(ref id) => self.apply_subst_type(subst, subst.get(id).unwrap()),
             Type::TVar(ref tv) => match tv.get() {
-                TypeVar::Unbound(id, _) => self.apply_subst_type(subst, subst.get(&id).unwrap()),
+                TypeVar::Unbound(id, _) => {
+                    let ty_opt = subst.get(&id);
+                    match ty_opt {
+                        Some(ty) => self.apply_subst_type(subst, ty),
+                        None => Type::Unit,
+                    }
+                }
                 _ => unreachable!(),
             },
             _ => ty.clone(),
@@ -336,7 +378,7 @@ impl Mono {
         }
 
         let subst = Subst::new();
-        let new_node = self.apply_subst_node(&subst, &node);
+        let new_node = self.apply_subst_node(Env::new(), &subst, &node);
 
         (self.toplevel, new_node)
     }

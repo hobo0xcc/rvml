@@ -11,6 +11,7 @@ pub enum Node {
     VarExpr(String),
     Not(Box<Node>),
     Neg(Box<Node>),
+    FNeg(Box<Node>),
     Tuple(Vector<Node>),
     Array(Box<Node>, Box<Node>),
     Get(Box<Node>, Box<Node>),
@@ -109,6 +110,7 @@ impl Parser {
         match op {
             "not" => ((), 19),
             "-" => ((), 17),
+            "-." => ((), 17),
             "if" => ((), 5),
             "let" => ((), 1),
             _ => {
@@ -260,6 +262,7 @@ impl Parser {
                         Node::Float(f) => Node::Float(-f),
                         _ => Node::Neg(Box::new(rhs)),
                     },
+                    "-." => Node::FNeg(Box::new(rhs)),
                     _ => unreachable!(),
                 }
             }
