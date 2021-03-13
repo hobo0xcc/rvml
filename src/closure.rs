@@ -1,4 +1,4 @@
-use crate::typing::{is_primitive, Subst, Type, TypedNode};
+use crate::typing::{is_primitive, PRIMITIVES, Subst, Type, TypedNode};
 use rpds::{HashTrieMap, HashTrieSet};
 use std::hash::Hash;
 
@@ -6,7 +6,7 @@ use std::hash::Hash;
 pub enum CNode {
     Unit,
     Int(i32),
-    Float(f32),
+    Float(f64),
     Bool(bool),
     VarExpr(String, Type, Subst, bool),
     Not(Box<CNode>),
@@ -549,10 +549,19 @@ impl Closure {
     }
 }
 
+pub fn primitive_known() -> Known {
+    let mut k = Known::new();
+    for name in PRIMITIVES.iter() {
+        k = k.insert(name.to_string());
+    }
+
+    k
+}
+
 pub fn closure(node: TypedNode) -> (Vec<FunDef>, CNode) {
     println!("Closure");
     let mut clos = Closure::new();
-    let new_node = clos.closure(Env::new(), Known::new(), &node);
+    let new_node = clos.closure(Env::new(), primitive_known(), &node);
 
     (clos.toplevel.into_iter().rev().collect(), new_node)
 }

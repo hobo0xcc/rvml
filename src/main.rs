@@ -5,7 +5,8 @@ extern crate rpds;
 
 use rvml::alpha::*;
 use rvml::closure::*;
-use rvml::mono::*;
+use rvml::mono2::*;
+// use rvml::mono::*;
 use rvml::parse::*;
 use rvml::tokenize::*;
 use rvml::typing::*;
@@ -79,7 +80,7 @@ fn main() -> io::Result<()> {
     }
 
     codegen(
-        mono(closure(alpha(typing(parse(tokenize(&source))).0))),
+        closure(mono(alpha(typing(parse(tokenize(&source))).0))),
         matches.value_of("OUTPUT").unwrap_or("main.o").to_string(),
         "".to_string(),
         "".to_string(),

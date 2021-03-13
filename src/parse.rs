@@ -6,7 +6,7 @@ use std::process;
 pub enum Node {
     Unit,
     Int(i32),
-    Float(f32),
+    Float(f64),
     Bool(bool),
     VarExpr(String),
     Not(Box<Node>),

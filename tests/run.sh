@@ -2,7 +2,7 @@
 run_test() {
     FILE="$1"
     if [ ! -e "lib.o" ]; then
-        gcc -c -o lib.o ../lib/lib.c
+        gcc -c -o lib.o ../lib64/lib.c
     fi
 
     MSG=`../target/debug/rvml -o main.o "$FILE"`

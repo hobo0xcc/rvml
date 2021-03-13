@@ -102,7 +102,7 @@ impl fmt::Display for Type {
 pub enum TypedNode {
     Unit,
     Int(i32),
-    Float(f32),
+    Float(f64),
     Bool(bool),
     VarExpr(String, Type, Subst),
     VarExtExpr(String, Type),
@@ -303,7 +303,8 @@ impl Typing {
                 self.unify(&mut *ret1, &mut *ret2)?;
             }
             _ => {
-                return Err(TypingError::TypeUnmatched)
+                panic!("Error");
+                // return Err(TypingError::TypeUnmatched)
             }
         }
 
@@ -621,8 +622,12 @@ impl Typing {
                 self.enter_level();
                 let mut fun_tv = self.new_typevar();
                 let mut arg_tvs = Vec::new();
-                for _ in args.iter() {
-                    arg_tvs.push(self.new_typevar());
+                for _name in args.iter() {
+                    if _name == "_" {
+                        arg_tvs.push(Type::Unit);
+                    } else {
+                        arg_tvs.push(self.new_typevar());
+                    }
                 }
                 let mut new_env_e1 = env.clone();
                 new_env_e1 = new_env_e1.add((name.to_string(), fun_tv.clone()));
@@ -850,9 +855,9 @@ impl Typing {
     }
 }
 
-static PRIMITIVES: &'static [&'static str] =
+pub static PRIMITIVES: &'static [&'static str] =
     &["float_of_int", "print_float", "print_int", "print_newline",
-    "truncate", "int_of_float", "abs_float", "sqrt", "cos", "sin"];
+    "truncate", "int_of_float", "abs_float", "sqrt", "cos", "sin", "print_byte", "prerr_byte", "read_float", "read_int"];
 
 pub fn is_primitive(name: &str) -> bool {
     for prim in PRIMITIVES.iter() {
@@ -905,6 +910,30 @@ pub fn primitive_func(env: Env) -> Env {
         args: vec![Type::Float],
         ret: Box::new(Type::Float),
     };
+    let atan_ty = Type::Func {
+        args: vec![Type::Float],
+        ret: Box::new(Type::Float),
+    };
+    let floor_ty = Type::Func {
+        args: vec![Type::Float],
+        ret: Box::new(Type::Float),
+    };
+    let print_byte_ty = Type::Func {
+        args: vec![Type::Int],
+        ret: Box::new(Type::Unit),
+    };
+    let prerr_byte_ty = Type::Func {
+        args: vec![Type::Int],
+        ret: Box::new(Type::Unit),
+    };
+    let read_float_ty = Type::Func {
+        args: vec![Type::Unit],
+        ret: Box::new(Type::Float),
+    };
+    let read_int_ty = Type::Func {
+        args: vec![Type::Unit],
+        ret: Box::new(Type::Int),
+    };
 
     env.add(("float_of_int".to_string(), float_of_int_ty))
         .add(("print_float".to_string(), print_float))
@@ -916,6 +945,12 @@ pub fn primitive_func(env: Env) -> Env {
         .add(("sqrt".to_string(), sqrt_ty))
         .add(("cos".to_string(), cos_ty))
         .add(("sin".to_string(), sin_ty))
+        .add(("atan".to_string(), atan_ty))
+        .add(("floor".to_string(), floor_ty))
+        .add(("print_byte".to_string(), print_byte_ty))
+        .add(("prerr_byte".to_string(), prerr_byte_ty))
+        .add(("read_float".to_string(), read_float_ty))
+        .add(("read_int".to_string(), read_int_ty))
 }
 
 pub fn typing(node: Node) -> (TypedNode, Type) {
@@ -948,7 +983,7 @@ fn occurs_check_1() {
             ret: Box::new(Type::Int),
         };
 
-        assert!(t.occurs_check(&tv.get(), &mut test_ty) == false);
+        assert!(t.occurs_check(&tv.get(), &mut test_ty));
     }
 
     {
@@ -956,7 +991,7 @@ fn occurs_check_1() {
             args: vec![Type::Int, Type::Bool],
             ret: Box::new(Type::Int),
         };
-        assert!(t.occurs_check(&tv.get(), &mut test_ty) == false);
+        assert!(!t.occurs_check(&tv.get(), &mut test_ty));
     }
 }
 

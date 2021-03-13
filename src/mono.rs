@@ -62,15 +62,23 @@ impl Mono {
         }
 
         let mut new_formal_fv = Vec::new();
+        println!("func: {}", name);
+        println!("freevar: {:?}", from_func.formal_fv);
         for (name, ty) in from_func.formal_fv.iter() {
-            let fv_ty = self.apply_subst_type(subst, ty);
-            let fv_name = if self.is_function(name) {
-                self.mangle_name(name, &fv_ty)
+            println!("{}", name);
+            if self.is_function(name) {
+                let dummy_dups = vec![];
+                let dups = self.dups.get(name).unwrap_or(&dummy_dups);
+                for (name_dup, ty_dup) in dups.iter() {
+                    let ty_dup_app = self.apply_subst_type(subst, ty_dup);
+                    println!("dup: {}", ty_dup_app);
+                    new_formal_fv.push((name_dup.clone(), ty_dup_app.clone()));
+                    new_env = new_env.insert(name_dup.clone(), ty_dup_app.clone());
+                }
             } else {
-                name.to_string()
-            };
-            new_formal_fv.push((fv_name.clone(), fv_ty.clone()));
-            new_env = new_env.insert(fv_name, fv_ty);
+                new_formal_fv.push((name.clone(), ty.clone()));
+                new_env = new_env.insert(name.clone(), ty.clone());
+            }
         }
 
         let new_body = self.apply_subst_node(new_env, subst, &from_func.body);
@@ -264,6 +272,7 @@ impl Mono {
 
                 let mut new_fv = Vec::new();
                 for fv in actual_fv.iter() {
+                    println!("actual_fv: {}: {}", fv, env.get(fv).unwrap());
                     let ty = self.apply_subst_type(subst, env.get(fv).unwrap());
                     let name = if self.is_function(fv) {
                         self.mangle_name(fv, &ty)
@@ -350,7 +359,12 @@ impl Mono {
                     ret: Box::new(new_ret),
                 }
             }
-            Type::QVar(ref id) => self.apply_subst_type(subst, subst.get(id).unwrap()),
+            Type::QVar(ref id) => {
+                println!("subst: {}", subst);
+                println!("{}", id);
+                // Type::Unit
+                self.apply_subst_type(subst, subst.get(id).unwrap())
+            }
             Type::TVar(ref tv) => match tv.get() {
                 TypeVar::Unbound(id, _) => {
                     let ty_opt = subst.get(&id);
