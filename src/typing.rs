@@ -866,6 +866,8 @@ pub static PRIMITIVES: &'static [&'static str] = &[
     "sqrt",
     "cos",
     "sin",
+    "atan",
+    "floor",
     "print_byte",
     "prerr_byte",
     "read_float",
