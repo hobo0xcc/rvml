@@ -7,3 +7,4 @@ Cargo.lock
 /.idea
 main
 main.o
+.DS_Store

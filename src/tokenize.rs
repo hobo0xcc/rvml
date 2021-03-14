@@ -63,7 +63,7 @@ impl Token {
     }
 }
 
-pub struct Tokenizer{
+pub struct Tokenizer {
     input: Vec<char>,
     pos: usize,
 }
@@ -174,14 +174,15 @@ impl Tokenizer {
                     "not" => Token::Op("not".to_string()),
                     _ => Token::Ident(t),
                 };
-                
+
                 return tok;
             }
 
             if ch.is_ascii_digit() {
                 let (begin, end) = self.read_while(|ch| ch.is_ascii_digit());
                 let int_part: String = self.input[begin..end].iter().collect();
-                if self.curr() == Some('.') || self.curr() == Some('e') || self.curr() == Some('E') {
+                if self.curr() == Some('.') || self.curr() == Some('e') || self.curr() == Some('E')
+                {
                     let mut sep = "";
                     let dec_part = if self.curr() == Some('.') {
                         sep = ".";
@@ -205,8 +206,10 @@ impl Tokenizer {
                     } else {
                         "".to_string()
                     };
-                    let float_val = format!("{}{}{}{}", int_part, sep, dec_part, exp_part).parse::<f64>().unwrap();
-                    
+                    let float_val = format!("{}{}{}{}", int_part, sep, dec_part, exp_part)
+                        .parse::<f64>()
+                        .unwrap();
+
                     return Token::Float(float_val);
                 } else {
                     let int_val = int_part.parse::<i32>().unwrap();
@@ -278,7 +281,6 @@ impl Tokenizer {
                 return Token::SemiColon;
             }
 
-
             panic!("Unknown character: {}", ch);
         }
 
@@ -321,7 +323,7 @@ fn tokenizer_test1() {
 //         many1::<String, _, _>(digit()).map(|s| Token::Num(s.parse::<i32>().unwrap()))
 //     }
 // }
-// 
+//
 // parser! {
 //     fn float_num_token[Input]()(Input) -> Token
 //     where [
@@ -335,7 +337,7 @@ fn tokenizer_test1() {
 //         ).map(|(int, _, dec)| Token::Float(format!("{}.{}", int, dec).parse::<f32>().unwrap()))
 //     }
 // }
-// 
+//
 // parser! {
 //     fn op_token[Input]()(Input) -> Token
 //     where [
@@ -362,7 +364,7 @@ fn tokenizer_test1() {
 //         ))
 //     }
 // }
-// 
+//
 // parser! {
 //     fn symbol_token[Input]()(Input) -> Token
 //     where [
@@ -377,7 +379,7 @@ fn tokenizer_test1() {
 //         ))
 //     }
 // }
-// 
+//
 // parser! {
 //     fn keyword_token[Input]()(Input) -> Token
 //     where [
@@ -404,7 +406,7 @@ fn tokenizer_test1() {
 //         })
 //     }
 // }
-// 
+//
 // parser! {
 //     fn comment[Input]()(Input) -> Token
 //     where [
@@ -421,7 +423,7 @@ fn tokenizer_test1() {
 //         ).map(|_: (char, char, String, char, char)| Token::Nop)
 //     }
 // }
-// 
+//
 // pub fn tokenize(s: &str) -> Vec<Token> {
 //     println!("Tokenize");
 //     let mut lexer = many1::<Vec<Token>, _, _>(choice((

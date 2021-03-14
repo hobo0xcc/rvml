@@ -354,7 +354,7 @@ impl Typing {
                     self.instantiate_loop(subst, &ty)
                 }
                 _ => (ty.clone(), subst),
-            }
+            },
             Type::Array(ref ty) => {
                 let (ty, subst) = self.instantiate_loop(subst, ty);
                 (Type::Array(Box::new(ty)), subst)
@@ -855,9 +855,22 @@ impl Typing {
     }
 }
 
-pub static PRIMITIVES: &'static [&'static str] =
-    &["float_of_int", "print_float", "print_int", "print_newline",
-    "truncate", "int_of_float", "abs_float", "sqrt", "cos", "sin", "print_byte", "prerr_byte", "read_float", "read_int"];
+pub static PRIMITIVES: &'static [&'static str] = &[
+    "float_of_int",
+    "print_float",
+    "print_int",
+    "print_newline",
+    "truncate",
+    "int_of_float",
+    "abs_float",
+    "sqrt",
+    "cos",
+    "sin",
+    "print_byte",
+    "prerr_byte",
+    "read_float",
+    "read_int",
+];
 
 pub fn is_primitive(name: &str) -> bool {
     for prim in PRIMITIVES.iter() {
@@ -888,7 +901,7 @@ pub fn primitive_func(env: Env) -> Env {
     };
     let truncate_ty = Type::Func {
         args: vec![Type::Float],
-        ret: Box::new(Type::Int)
+        ret: Box::new(Type::Int),
     };
     let int_of_float_ty = Type::Func {
         args: vec![Type::Float],

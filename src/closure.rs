@@ -1,4 +1,4 @@
-use crate::typing::{is_primitive, PRIMITIVES, Subst, Type, TypedNode};
+use crate::typing::{is_primitive, Subst, Type, TypedNode, PRIMITIVES};
 use rpds::{HashTrieMap, HashTrieSet};
 use std::hash::Hash;
 

@@ -416,7 +416,9 @@ impl<'ctx> CodeGen<'ctx> {
             }
             FNeg(ref expr) => {
                 let expr_val = self.codegen(expr, env);
-                let res = self.builder.build_float_neg(expr_val.into_float_value(), "tmp");
+                let res = self
+                    .builder
+                    .build_float_neg(expr_val.into_float_value(), "tmp");
                 FloatValue(res)
             }
             Tuple(ref exprs, ref ty) => {
@@ -832,7 +834,11 @@ impl<'ctx> CodeGen<'ctx> {
                     let func = if is_primitive(&name) {
                         match self.module.get_function(&format!("mincaml_{}", name)) {
                             Some(f) => f,
-                            _ => self.module.add_function(&format!("mincaml_{}", name), func_llty, None)
+                            _ => self.module.add_function(
+                                &format!("mincaml_{}", name),
+                                func_llty,
+                                None,
+                            ),
                         }
                     } else {
                         self.module.add_function(&name, func_llty, None)
