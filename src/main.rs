@@ -47,8 +47,9 @@ fn main() -> io::Result<()> {
             Arg::with_name("SHOW_TYPE")
                 .short("t")
                 .long("show-type")
-                .help("show type"),
+                .help("Show type"),
         )
+        .arg(Arg::with_name("TARGET").long("target").help("Specify target triple").takes_value(true))
         .arg(Arg::with_name("AST").long("ast").help("Print AST"))
         .arg(
             Arg::with_name("INPUT")
@@ -81,7 +82,7 @@ fn main() -> io::Result<()> {
         closure(mono(alpha(typing(parse(tokenize(&source))).0))),
         matches.value_of("OUTPUT").unwrap_or("main.o").to_string(),
         "".to_string(),
-        "".to_string(),
+        matches.value_of("TARGET").unwrap_or("").to_string(),
     );
     Ok(())
 }

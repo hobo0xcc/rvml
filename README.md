@@ -2,7 +2,6 @@
 
 `rvml` is a min-caml compiler that implements let-polymorphism.
 rvml's polymorphic type inference is implemented in level-based algorithm discovered by Didier Rémy.
-Code generator can generate codes with polymorphic types.
 
 ## Require
 
@@ -28,12 +27,13 @@ USAGE:
 
 FLAGS:
         --ast          Print AST
-    -t, --show-type    show type
+    -t, --show-type    Show type
     -h, --help         Prints help information
     -V, --version      Prints version information
 
 OPTIONS:
     -o, --output <OUTPUT>    Output file
+        --target <TARGET>    Specify target triple
 
 ARGS:
     <INPUT>    Input file
@@ -61,10 +61,10 @@ $ ./main
 $ echo $?    # This should put 42.
 ```
 
-To use primitive functions, you'll need to link generated object file with `lib/lib.c`.
+To use primitive functions, you'll need to link generated object file with `lib64/lib.c`.
 
 ```
-$ gcc -c -o lib.o lib/lib.c
+$ gcc -c -o lib.o lib64/lib.c
 $ gcc -o main main.o lib.o
 ```
 
@@ -79,19 +79,19 @@ let rec f x = x in if f (f true) then f 42 else f 2
 ### fibonacci number
 
 ```ocaml
-let rec fib n = if n < 2 then 1 else (fib (n - 1)) + (fib (n - 2)) in fib 10
+let rec fib n = if n < 2 then 1 else fib (n - 1) + fib (n - 2) in fib 10
 ```
 
 ### factorial
 
 ```ocaml
-let rec fact n = if n = 0 then 1 else n * (fact (n - 1)) in fact 5
+let rec fact n = if n = 0 then 1 else n * fact (n - 1) in fact 5
 ```
 
 ### tuple
 
 ```ocaml
-let rec f x = (x, x, x) in let (a, b, c) = f 3 in a + b + c
+let rec f x = x, x, x in let (a, b, c) = f 3 in a + b + c
 ```
 
 ## Todo
