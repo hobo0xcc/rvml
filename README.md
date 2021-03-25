@@ -26,10 +26,9 @@ USAGE:
     rvml [FLAGS] [OPTIONS] [INPUT]
 
 FLAGS:
-        --ast          Print AST
-    -t, --show-type    Show type
-    -h, --help         Prints help information
-    -V, --version      Prints version information
+    -r, --repl       REPL
+    -h, --help       Prints help information
+    -V, --version    Prints version information
 
 OPTIONS:
     -o, --output <OUTPUT>    Output file

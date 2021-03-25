@@ -969,7 +969,7 @@ pub fn primitive_func(env: Env) -> Env {
 }
 
 pub fn typing(node: Node) -> (TypedNode, Type) {
-    println!("Typing");
+    // println!("Typing");
     let mut t = Typing::new();
     let env = DeBruijn::new();
     match t.typing(primitive_func(env), &node) {

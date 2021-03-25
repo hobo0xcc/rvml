@@ -452,7 +452,7 @@ impl Parser {
 }
 
 pub fn parse(tokens: Vec<Token>) -> Node {
-    println!("Parse");
+    // println!("Parse");
     let mut parser = Parser::new(tokens);
     parser.expr(0)
 }

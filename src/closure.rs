@@ -559,7 +559,7 @@ pub fn primitive_known() -> Known {
 }
 
 pub fn closure(node: TypedNode) -> (Vec<FunDef>, CNode) {
-    println!("Closure");
+    // println!("Closure");
     let mut clos = Closure::new();
     let new_node = clos.closure(Env::new(), primitive_known(), &node);
 

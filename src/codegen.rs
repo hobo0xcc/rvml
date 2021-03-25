@@ -8,10 +8,12 @@ use inkwell::types::*;
 use inkwell::values::*;
 use inkwell::AddressSpace;
 use inkwell::OptimizationLevel;
+use inkwell::execution_engine::ExecutionEngine;
 use inkwell::*;
 use std::cell::RefCell;
 use std::ops::Deref;
 use std::rc::Rc;
+use std::process;
 use std::{convert::TryInto, path::Path, unimplemented, unreachable};
 
 type Env<'a> = Environment<String, BasicValueEnum<'a>>; // key: variable name, value: variable value
@@ -33,6 +35,10 @@ impl<'ctx> CodeGen<'ctx> {
             module,
             builder,
         }
+    }
+
+    pub fn execution_engine(&mut self) -> ExecutionEngine<'ctx> {
+        self.module.create_jit_execution_engine(OptimizationLevel::None).unwrap()
     }
 
     pub fn print_ir(&self) {
@@ -867,13 +873,42 @@ impl<'ctx> CodeGen<'ctx> {
     }
 }
 
+pub fn jit_execute(
+    prog: (Vec<FunDef>, CNode),
+) {
+    let config = InitializationConfig::default();
+    Target::initialize_all(&config);
+    let context = Context::create();
+    let module = context.create_module("repl");
+    let builder = context.create_builder();
+    let mut c = CodeGen::new(&context, module, builder);
+    c.codegen_init(prog.0);
+    let env = Rc::new(RefCell::new(Env::new()));
+    let res = c.codegen(&prog.1, env).into_int_value();
+    c.builder.build_return(Some(&res));
+
+    let ee = c.execution_engine();
+    let maybe_fn = unsafe { ee.get_function::<unsafe extern "C" fn() -> i32>("main") };
+    let compiled_fn = match maybe_fn {
+        Ok(f) => f,
+        Err(e) => {
+            println!("{}", e);
+            process::exit(1);
+        }
+    };
+
+    unsafe {
+        println!("{}", compiled_fn.call());
+    }
+}
+
 pub fn codegen(
     prog: (Vec<FunDef>, CNode),
     file_name: String,
     target_name: String,
     target_triple: String,
 ) {
-    println!("Codegen");
+    // println!("Codegen");
     let config = InitializationConfig::default();
     Target::initialize_all(&config);
     let context = Context::create();

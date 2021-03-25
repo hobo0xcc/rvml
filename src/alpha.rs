@@ -149,7 +149,7 @@ impl Alpha {
 }
 
 pub fn alpha(mut node: TypedNode) -> TypedNode {
-    println!("Alpha");
+    // println!("Alpha");
     let mut a = Alpha::new();
     a.alpha(Env::new(), &mut node);
     node

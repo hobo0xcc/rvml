@@ -11,6 +11,7 @@ use rvml::mono::*;
 use rvml::parse::*;
 use rvml::tokenize::*;
 use rvml::typing::*;
+use rvml::repl::*;
 use std::fs;
 use std::io::{self, Read};
 use std::process;
@@ -43,14 +44,8 @@ fn main() -> io::Result<()> {
         .version("0.1.0")
         .author("hobo0xcc")
         .about("min-caml compiler with let-polymorphism")
-        .arg(
-            Arg::with_name("SHOW_TYPE")
-                .short("t")
-                .long("show-type")
-                .help("Show type"),
-        )
         .arg(Arg::with_name("TARGET").long("target").help("Specify target triple").takes_value(true))
-        .arg(Arg::with_name("AST").long("ast").help("Print AST"))
+        .arg(Arg::with_name("REPL").long("repl").short("r").help("REPL"))
         .arg(
             Arg::with_name("INPUT")
                 .help("Input file")
@@ -66,12 +61,14 @@ fn main() -> io::Result<()> {
         )
         .get_matches();
 
-    let name = matches.value_of("INPUT").unwrap();
-    let source = read_source(name);
-    if matches.is_present("SHOW_TYPE") {
-        println!("{}", typing(parse(tokenize(&source))).1);
+    if matches.is_present("REPL") {
+        let mut repl = Repl::new();
+        repl.main_loop()?;
         return Ok(());
     }
+
+    let input_file = matches.value_of("INPUT").unwrap();
+    let source = read_source(input_file);
     if matches.is_present("AST") {
         let res = parse(tokenize(&source));
         println!("{:?}", res);

@@ -430,7 +430,7 @@ impl Mono2 {
 }
 
 pub fn mono(node: TypedNode) -> TypedNode {
-    println!("Mono");
+    // println!("Mono");
     let mut mono = Mono2::new();
     let res = mono.monomorphize(&node);
     res
