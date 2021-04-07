@@ -46,6 +46,7 @@ fn main() -> io::Result<()> {
         .about("min-caml compiler with let-polymorphism")
         .arg(Arg::with_name("TARGET").long("target").help("Specify target triple").takes_value(true))
         .arg(Arg::with_name("REPL").long("repl").short("r").help("REPL"))
+        .arg(Arg::with_name("PRINT_IR").long("print-ir").help("Prints llvm-ir"))
         .arg(
             Arg::with_name("INPUT")
                 .help("Input file")
@@ -80,6 +81,7 @@ fn main() -> io::Result<()> {
         matches.value_of("OUTPUT").unwrap_or("main.o").to_string(),
         "".to_string(),
         matches.value_of("TARGET").unwrap_or("").to_string(),
+        matches.is_present("PRINT_IR"),
     );
     Ok(())
 }

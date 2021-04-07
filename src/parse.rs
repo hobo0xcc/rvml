@@ -354,6 +354,9 @@ impl Parser {
                 let expr = self.simple_expr().unwrap();
                 Node::Array(Box::new(size), Box::new(expr))
             }
+            Token::Eof => {
+                return Node::Unit;
+            }
             _ => match self.simple_expr() {
                 Some(nd) => {
                     if let Some(args) = self.actual_args() {
