@@ -4,6 +4,7 @@ use inkwell::context::Context;
 use inkwell::module::Module;
 use inkwell::targets::*;
 use inkwell::targets::{InitializationConfig, Target};
+use inkwell::passes::PassManager;
 use inkwell::types::*;
 use inkwell::values::*;
 use inkwell::AddressSpace;
@@ -22,6 +23,7 @@ pub struct CodeGen<'ctx> {
     context: &'ctx Context,
     module: Module<'ctx>,
     builder: Builder<'ctx>,
+    fpm: PassManager<FunctionValue<'ctx>>,
 }
 
 impl<'ctx> CodeGen<'ctx> {
@@ -29,11 +31,13 @@ impl<'ctx> CodeGen<'ctx> {
         context: &'ctx Context,
         module: Module<'ctx>,
         builder: Builder<'ctx>,
+        fpm: PassManager<FunctionValue<'ctx>>,
     ) -> CodeGen<'ctx> {
         CodeGen {
             context: &context,
             module,
             builder,
+            fpm,
         }
     }
 
@@ -91,7 +95,8 @@ impl<'ctx> CodeGen<'ctx> {
                 PointerType(self.type_to_llvmty(&**ty).ptr_type(AddressSpace::Generic))
             }
             Type::Tuple(ref _tys) => {
-                PointerType(self.create_tuple_type(ty).ptr_type(AddressSpace::Generic))
+                // PointerType(self.create_tuple_type(ty).ptr_type(AddressSpace::Generic))
+                StructType(self.create_tuple_type(ty))
             }
             Type::Func { args: _, ret: _ } => {
                 let func_ptr_ty =
@@ -208,7 +213,7 @@ impl<'ctx> CodeGen<'ctx> {
         } else {
             TargetTriple::create(target_triple_name.as_str())
         };
-        let opt = OptimizationLevel::Default;
+        let opt = OptimizationLevel::Aggressive;
         let reloc = RelocMode::Default;
         let model = CodeModel::Default;
         let target = Target::from_triple(&target_triple).unwrap();
@@ -353,6 +358,10 @@ impl<'ctx> CodeGen<'ctx> {
         let func_res = self.codegen(&fundef.body, env_rc.clone());
 
         self.builder.build_return(Some(&func_res));
+        
+        if func.verify(true) {
+            self.fpm.run_on(&func);
+        }
     }
 
     pub fn stack_save(&mut self) -> BasicValueEnum<'ctx> {
@@ -435,8 +444,11 @@ impl<'ctx> CodeGen<'ctx> {
                 }
                 let tuple_llty = self.create_tuple_type(ty);
 
-                let tuple_ptr = self.builder.build_malloc(tuple_llty, "tmp").unwrap();
+                let stack = self.stack_save();
+
+                let tuple_ptr = self.builder.build_alloca(tuple_llty, "tmp"); // self.builder.build_malloc(tuple_llty, "tmp").unwrap();
                 for (i, val) in values.into_iter().enumerate() {
+
                     let field = self
                         .builder
                         .build_struct_gep(tuple_ptr, i.try_into().unwrap(), "tmp")
@@ -444,7 +456,10 @@ impl<'ctx> CodeGen<'ctx> {
                     self.builder.build_store(field, val);
                 }
 
-                BasicValueEnum::PointerValue(tuple_ptr)
+                let val = self.builder.build_load(tuple_ptr, "tmp");
+                self.stack_restore(stack);
+                val
+                // BasicValueEnum::PointerValue(tuple_ptr)
             }
             Array(ref size, ref expr, ref _ty) => {
                 let size_val = self.codegen(size, env.clone());
@@ -719,20 +734,31 @@ impl<'ctx> CodeGen<'ctx> {
                 tuple_ty: ref _tuple_ty,
                 ty: ref _ty,
             } => {
-                let tuple_ptr = self.codegen(first_expr, env.clone()).into_pointer_value();
+                let tuple = self.codegen(first_expr, env.clone()).into_struct_value();
+                let stack = self.stack_save();
+                let tuple_ptr = self.builder.build_alloca(tuple.get_type(), "tmp"); //.into_pointer_value();
+                self.builder.build_store(tuple_ptr, tuple);
                 let mut env_child = Env::make_child(env);
-                for (i, (name, _ty)) in names.iter().enumerate() {
+                let mut tuple_values = Vec::new();
+                for i in 0..names.len() {
                     let field = self
                         .builder
                         .build_struct_gep(tuple_ptr, i.try_into().unwrap(), "tmp")
                         .unwrap();
                     let data = self.builder.build_load(field, "tmp");
+                    tuple_values.push(data);
+                }
 
+                self.stack_restore(stack);
+
+                for (i, (name, _ty)) in names.iter().enumerate() {
+                    let data = tuple_values[i];
                     let data_type = data.get_type();
                     let ptr = self.builder.build_alloca(data_type, name);
                     self.builder.build_store(ptr, data);
                     env_child.set(name.to_string(), PointerValue(ptr));
                 }
+
                 // self.builder.build_free(tuple_ptr);
 
                 let new_env = Rc::new(RefCell::new(env_child));
@@ -881,7 +907,19 @@ pub fn jit_execute(
     let context = Context::create();
     let module = context.create_module("repl");
     let builder = context.create_builder();
-    let mut c = CodeGen::new(&context, module, builder);
+
+    let fpm = PassManager::create(&module);
+    fpm.add_instruction_combining_pass();
+    fpm.add_reassociate_pass();
+    fpm.add_gvn_pass();
+    fpm.add_cfg_simplification_pass();
+    fpm.add_basic_alias_analysis_pass();
+    fpm.add_promote_memory_to_register_pass();
+    fpm.add_instruction_combining_pass();
+    fpm.add_reassociate_pass();
+    fpm.initialize();
+
+    let mut c = CodeGen::new(&context, module, builder, fpm);
     c.codegen_init(prog.0);
     let env = Rc::new(RefCell::new(Env::new()));
     let res = c.codegen(&prog.1, env).into_int_value();
@@ -915,7 +953,95 @@ pub fn codegen(
     let context = Context::create();
     let module = context.create_module("program");
     let builder = context.create_builder();
-    let mut c = CodeGen::new(&context, module, builder);
+
+    let fpm = PassManager::create(&module);
+    // NG
+    // fpm.add_argument_promotion_pass();
+    // fpm.add_constant_merge_pass();
+    // fpm.add_dead_arg_elimination_pass();
+    // fpm.add_function_attrs_pass();
+    // fpm.add_function_inlining_pass();
+    // fpm.add_always_inliner_pass();
+    // fpm.add_global_dce_pass();
+    // fpm.add_global_optimizer_pass();
+    // fpm.add_prune_eh_pass();
+    // fpm.add_ipsccp_pass();
+    // // fpm.add_internalize_pass();
+    // fpm.add_strip_dead_prototypes_pass();
+    // fpm.add_strip_symbol_pass();
+
+    // OK
+    fpm.add_loop_vectorize_pass();
+    fpm.add_slp_vectorize_pass();
+
+    // OK
+    fpm.add_aggressive_dce_pass();
+    fpm.add_bit_tracking_dce_pass();
+    fpm.add_alignment_from_assumptions_pass();
+    fpm.add_cfg_simplification_pass();
+    fpm.add_dead_store_elimination_pass();
+    fpm.add_scalarizer_pass();
+    fpm.add_merged_load_store_motion_pass();
+    fpm.add_gvn_pass();
+    fpm.add_new_gvn_pass();
+    fpm.add_ind_var_simplify_pass();
+    fpm.add_instruction_combining_pass();
+
+    // OK
+    fpm.add_jump_threading_pass();
+    fpm.add_licm_pass();
+    fpm.add_loop_deletion_pass();
+    fpm.add_loop_idiom_pass();
+    fpm.add_loop_rotate_pass();
+    fpm.add_loop_reroll_pass();
+    fpm.add_loop_unroll_pass();
+    fpm.add_loop_unswitch_pass();
+    fpm.add_memcpy_optimize_pass();
+    fpm.add_partially_inline_lib_calls_pass();
+    fpm.add_lower_switch_pass();
+    fpm.add_promote_memory_to_register_pass();
+    // fpm.add_reassociate_pass();
+
+    // OK
+    fpm.add_sccp_pass();
+    fpm.add_scalar_repl_aggregates_pass();
+    fpm.add_scalar_repl_aggregates_pass_ssa();
+    // fpm.add_scalar_repl_aggregates_pass_with_threshold();
+    fpm.add_simplify_lib_calls_pass();
+    fpm.add_tail_call_elimination_pass();
+    fpm.add_demote_memory_to_register_pass();
+    fpm.add_verifier_pass();
+    fpm.add_correlated_value_propagation_pass();
+
+    // OK
+    fpm.add_early_cse_pass();
+    fpm.add_early_cse_mem_ssa_pass();
+    fpm.add_lower_expect_intrinsic_pass();
+    fpm.add_type_based_alias_analysis_pass();
+    fpm.add_scoped_no_alias_aa_pass();
+    fpm.add_aggressive_inst_combiner_pass();
+    fpm.add_loop_unroll_and_jam_pass();
+    fpm.add_coroutine_early_pass();
+
+    // NG
+    // fpm.add_coroutine_split_pass();
+
+    // OK
+    fpm.add_coroutine_elide_pass();
+    fpm.add_coroutine_cleanup_pass();
+
+    fpm.add_instruction_combining_pass();
+    fpm.add_reassociate_pass();
+    fpm.add_gvn_pass();
+    fpm.add_cfg_simplification_pass();
+    fpm.add_basic_alias_analysis_pass();
+    fpm.add_promote_memory_to_register_pass();
+    fpm.add_instruction_combining_pass();
+    fpm.add_reassociate_pass();
+
+    fpm.initialize();
+
+    let mut c = CodeGen::new(&context, module, builder, fpm);
     c.codegen_init(prog.0);
     let env = Rc::new(RefCell::new(Env::new()));
     let res = c.codegen(&prog.1, env).into_int_value();

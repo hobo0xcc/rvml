@@ -478,6 +478,12 @@ impl Closure {
                 let fv_e1 = self.fv(&e1);
                 let is_recurs = fv_e1.contains(id);
                 let zs = Closure::diff(fv_e1, s_args);
+                // for name in zs.iter() {
+                //     match new_env.get(name) {
+                //         Some(_) => println!("Some({})", name),
+                //         None => println!("{}", name),
+                //     }
+                // }
                 let zts = zs
                     .iter()
                     .map(|x| (x.to_string(), new_env.get(x).unwrap().clone()))

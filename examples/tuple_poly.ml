@@ -5,10 +5,11 @@ let rec f x =
     h in
   g in
 
-let (x, y, z) = ((f 2) 3) 4 in
-print_int (x + y + z);
+let (a, b, c) = ((f 2) 3) 4 in
+print_int (a + b + c);
 print_newline ();
-let (xf, yf, zf) = ((f 2.4) 3.5) 4.6 in
-print_float (xf +. yf +. zf);
-print_newline ();
+(* below code causes panic *)
+(*let (af, bf, cf) = ((f 2.4) 3.5) 4.6 in*)
+(*print_float (af +. bf +. cf);*)
+(*print_newline ();*)
 ()
