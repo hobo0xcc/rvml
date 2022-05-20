@@ -3,9 +3,11 @@
 `rvml` is a min-caml compiler that implements let-polymorphism.
 rvml's polymorphic type inference is implemented in level-based algorithm discovered by Didier Rémy.
 
+![](img/contest.png)
+
 ## Require
 
-`llvm-11.0.1`
+`llvm-13.0.1`
 
 In macOS, you can install llvm with Homebrew.
 
@@ -92,7 +94,3 @@ let rec fact n = if n = 0 then 1 else n * fact (n - 1) in fact 5
 ```ocaml
 let rec f x = x, x, x in let (a, b, c) = f 3 in a + b + c
 ```
-
-## Todo
-
-- [x] Compile min-caml raytracer

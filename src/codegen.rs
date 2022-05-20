@@ -1,21 +1,21 @@
 use crate::{closure::*, env::Environment, typing::*};
 use inkwell::builder::Builder;
 use inkwell::context::Context;
+use inkwell::execution_engine::ExecutionEngine;
 use inkwell::module::Module;
+use inkwell::passes::PassManager;
 use inkwell::targets::*;
 use inkwell::targets::{InitializationConfig, Target};
-use inkwell::passes::PassManager;
 use inkwell::types::*;
 use inkwell::values::*;
 use inkwell::AddressSpace;
 use inkwell::OptimizationLevel;
-use inkwell::execution_engine::ExecutionEngine;
 use inkwell::*;
 use std::cell::RefCell;
 use std::ops::Deref;
-use std::rc::Rc;
 use std::process;
-use std::{convert::TryInto, path::Path, unimplemented, unreachable};
+use std::rc::Rc;
+use std::{convert::TryFrom, convert::TryInto, path::Path, unimplemented, unreachable};
 
 type Env<'a> = Environment<String, BasicValueEnum<'a>>; // key: variable name, value: variable value
 
@@ -42,11 +42,41 @@ impl<'ctx> CodeGen<'ctx> {
     }
 
     pub fn execution_engine(&mut self) -> ExecutionEngine<'ctx> {
-        self.module.create_jit_execution_engine(OptimizationLevel::None).unwrap()
+        self.module
+            .create_jit_execution_engine(OptimizationLevel::None)
+            .unwrap()
     }
 
     pub fn print_ir(&self) {
         self.module.print_to_stderr();
+    }
+
+    fn convert_to_metadata_type(&self, ty: BasicTypeEnum<'ctx>) -> BasicMetadataTypeEnum<'ctx> {
+        use BasicTypeEnum::*;
+        match ty {
+            ArrayType(t) => BasicMetadataTypeEnum::ArrayType(t),
+            FloatType(t) => BasicMetadataTypeEnum::FloatType(t),
+            IntType(t) => BasicMetadataTypeEnum::IntType(t),
+            PointerType(t) => BasicMetadataTypeEnum::PointerType(t),
+            StructType(t) => BasicMetadataTypeEnum::StructType(t),
+            VectorType(t) => BasicMetadataTypeEnum::VectorType(t),
+        }
+    }
+
+    fn convert_to_metadata_value(
+        &self,
+        value: BasicValueEnum<'ctx>,
+    ) -> BasicMetadataValueEnum<'ctx> {
+        use BasicValueEnum::*;
+
+        match value {
+            ArrayValue(t) => BasicMetadataValueEnum::ArrayValue(t),
+            FloatValue(t) => BasicMetadataValueEnum::FloatValue(t),
+            IntValue(t) => BasicMetadataValueEnum::IntValue(t),
+            PointerValue(t) => BasicMetadataValueEnum::PointerValue(t),
+            StructValue(t) => BasicMetadataValueEnum::StructValue(t),
+            VectorValue(t) => BasicMetadataValueEnum::VectorValue(t),
+        }
     }
 
     pub fn create_func_type(&self, ty: &Type) -> FunctionType<'ctx> {
@@ -59,10 +89,14 @@ impl<'ctx> CodeGen<'ctx> {
                 for arg_ty in args.iter() {
                     arg_lltypes.push(self.type_to_llvmty(arg_ty));
                 }
-                let ret_lltype = self.type_to_llvmty(&**ret);
+                let ret_type = self.type_to_llvmty(&**ret);
+                let arg_types = arg_lltypes
+                    .iter()
+                    .map(|t| self.convert_to_metadata_type(t.clone()))
+                    .collect::<Vec<BasicMetadataTypeEnum>>();
 
-                let func_lltype = ret_lltype.fn_type(&arg_lltypes, false);
-                func_lltype
+                let func_type = ret_type.fn_type(&arg_types, false);
+                func_type
             }
             _ => unreachable!(),
         }
@@ -247,7 +281,7 @@ impl<'ctx> CodeGen<'ctx> {
         let stacksave = i8_ptr.fn_type(&[], false);
         self.add_intrinsic("llvm.stacksave", stacksave);
 
-        let stackrestore = void.fn_type(&[i8_ptr], false);
+        let stackrestore = void.fn_type(&[self.convert_to_metadata_type(i8_ptr)], false);
         self.add_intrinsic("llvm.stackrestore", stackrestore);
     }
 
@@ -290,15 +324,19 @@ impl<'ctx> CodeGen<'ctx> {
             arg_lltypes.push(self.type_to_llvmty(ty));
         }
 
-        let ret_lltype = match *func_ty {
+        let ret_type = match *func_ty {
             Type::Func {
                 args: ref _args,
                 ref ret,
             } => self.type_to_llvmty(&**ret),
             _ => unreachable!(),
         };
-        let func_lltype = ret_lltype.fn_type(&arg_lltypes, false);
-        let _func = self.module.add_function(func_name, func_lltype, None);
+        let arg_types = arg_lltypes
+            .iter()
+            .map(|t| self.convert_to_metadata_type(t.clone()))
+            .collect::<Vec<BasicMetadataTypeEnum>>();
+        let func_type = ret_type.fn_type(&arg_types, false);
+        let _func = self.module.add_function(func_name, func_type, None);
     }
 
     pub fn codegen_func(&mut self, fundef: &FunDef) {
@@ -358,7 +396,7 @@ impl<'ctx> CodeGen<'ctx> {
         let func_res = self.codegen(&fundef.body, env_rc.clone());
 
         self.builder.build_return(Some(&func_res));
-        
+
         if func.verify(true) {
             self.fpm.run_on(&func);
         }
@@ -372,6 +410,7 @@ impl<'ctx> CodeGen<'ctx> {
     }
 
     pub fn stack_restore(&mut self, stack: BasicValueEnum<'ctx>) {
+        let stack = self.convert_to_metadata_value(stack);
         self.builder.build_call(
             self.get_intrinsic("llvm.stackrestore").unwrap(),
             &[stack],
@@ -448,7 +487,6 @@ impl<'ctx> CodeGen<'ctx> {
 
                 let tuple_ptr = self.builder.build_alloca(tuple_llty, "tmp"); // self.builder.build_malloc(tuple_llty, "tmp").unwrap();
                 for (i, val) in values.into_iter().enumerate() {
-
                     let field = self
                         .builder
                         .build_struct_gep(tuple_ptr, i.try_into().unwrap(), "tmp")
@@ -825,9 +863,17 @@ impl<'ctx> CodeGen<'ctx> {
                     func_args.push(arg_val);
                 }
 
+                let func_args = func_args
+                    .into_iter()
+                    .map(|t| self.convert_to_metadata_value(t))
+                    .collect::<Vec<_>>();
                 let result = self
                     .builder
-                    .build_call(func_ptr, func_args.as_slice(), "tmp")
+                    .build_call(
+                        CallableValue::try_from(func_ptr).unwrap(),
+                        func_args.as_slice(),
+                        "tmp",
+                    )
                     .try_as_basic_value()
                     .unwrap_left();
                 result
@@ -849,11 +895,15 @@ impl<'ctx> CodeGen<'ctx> {
                         .ptr_type(AddressSpace::Generic)
                         .const_null();
 
-                    let mut arg_values = Vec::new();
-                    arg_values.push(BasicValueEnum::PointerValue(i8_ptr_null));
+                    let mut arg_llvalues = Vec::new();
+                    arg_llvalues.push(BasicValueEnum::PointerValue(i8_ptr_null));
                     for arg in args.iter() {
-                        arg_values.push(self.codegen(arg, env.clone()));
+                        arg_llvalues.push(self.codegen(arg, env.clone()));
                     }
+                    let arg_values = arg_llvalues
+                        .into_iter()
+                        .map(|t| self.convert_to_metadata_value(t))
+                        .collect::<Vec<BasicMetadataValueEnum>>();
 
                     let result = self
                         .builder
@@ -886,6 +936,10 @@ impl<'ctx> CodeGen<'ctx> {
                     for arg in args.iter() {
                         arg_values.push(self.codegen(arg, env.clone()));
                     }
+                    let arg_values = arg_values
+                        .into_iter()
+                        .map(|t| self.convert_to_metadata_value(t))
+                        .collect::<Vec<BasicMetadataValueEnum>>();
 
                     let result = self
                         .builder
@@ -899,9 +953,7 @@ impl<'ctx> CodeGen<'ctx> {
     }
 }
 
-pub fn jit_execute(
-    prog: (Vec<FunDef>, CNode),
-) {
+pub fn jit_execute(prog: (Vec<FunDef>, CNode)) {
     let config = InitializationConfig::default();
     Target::initialize_all(&config);
     let context = Context::create();
@@ -945,7 +997,7 @@ pub fn codegen(
     file_name: String,
     target_name: String,
     target_triple: String,
-    print_ir: bool
+    print_ir: bool,
 ) {
     // println!("Codegen");
     let config = InitializationConfig::default();
