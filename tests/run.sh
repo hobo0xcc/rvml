@@ -5,7 +5,7 @@ run_test() {
         gcc -c -o lib.o ../lib64/lib.c
     fi
 
-    MSG=`../target/debug/rvml -o main.o "$FILE"`
+    MSG=`../target/release/rvml -o main.o "$FILE"`
     if [ $? != 0 ]; then
         echo "$MSG"
         echo "\033[35mError\033[0m: $FILE"
@@ -23,7 +23,7 @@ run_test() {
     fi
 }
 
-if [ ! -e "../target/debug/rvml" ]; then
+if [ ! -e "../target/release/rvml" ]; then
     echo "You need to build rvml"
     exit 1
 fi

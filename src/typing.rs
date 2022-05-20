@@ -39,7 +39,7 @@ impl Type {
                 for ty in types.iter().skip(1) {
                     ty_name = format!("{}_{}", ty_name, ty.to_string());
                 }
-                ty_name
+                format!("#{}#", ty_name)
             }
             Type::Func { ref args, ref ret } => {
                 let mut ty_name = args.get(0).unwrap().to_string();

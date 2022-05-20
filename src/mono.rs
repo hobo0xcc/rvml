@@ -32,6 +32,25 @@ impl Mono2 {
         new_subst
     }
 
+    fn is_contra_subst(&self, s1: &Subst, s2: &Subst) -> bool {
+        for (var, ty) in s1 {
+            if s2.contains_key(var) {
+                if s2.get(var).unwrap() != ty {
+                    return true;
+                }
+            }
+        }
+        for (var, ty) in s2 {
+            if s1.contains_key(var) {
+                if s1.get(var).unwrap() != ty {
+                    return true;
+                }
+            }
+        }
+
+        false
+    }
+
     pub fn is_poly(&self, ty: &Type) -> bool {
         match *ty {
             Type::Array(ref ty1) => self.is_poly(&**ty1),
@@ -117,7 +136,7 @@ impl Mono2 {
                     if self.resolved.contains(&mangled_name) {
                         return;
                     }
-                    self.resolved = self.resolved.insert(mangled_name);
+                    self.resolved = self.resolved.insert(mangled_name.clone());
                     if let Some(flag) = self.visited.get(name) {
                         if *flag {
                             return;
@@ -127,6 +146,8 @@ impl Mono2 {
                     let nd = env.get(name).unwrap();
                     self.resolve(env.clone(), &new_subst, nd);
                     self.visited.insert(name.to_string(), false);
+
+                    // self.renv.insert(mangled_name, vec![new_subst.clone()]);
                     self.renv
                         .entry(name.to_string())
                         .or_insert_with(|| vec![])
@@ -225,7 +246,7 @@ impl Mono2 {
         format!("{}_{}", name, ty.to_string())
     }
 
-    pub fn duplicate(&self, subst: &Subst, node: &TypedNode) -> TypedNode {
+    pub fn duplicate(&self, subst: &Subst, node: &TypedNode, toplevel: bool) -> TypedNode {
         use crate::typing::TypedNode::*;
         match *node {
             Unit | Int(_) | Float(_) | Bool(_) => node.clone(),
@@ -241,37 +262,37 @@ impl Mono2 {
                 VarExpr(new_name, new_ty, subst_var.clone())
             }
             VarExtExpr(_, _) => node.clone(),
-            Not(ref expr) => Not(Box::new(self.duplicate(subst, &**expr))),
-            Neg(ref expr) => Neg(Box::new(self.duplicate(subst, &**expr))),
-            FNeg(ref expr) => FNeg(Box::new(self.duplicate(subst, &**expr))),
+            Not(ref expr) => Not(Box::new(self.duplicate(subst, &**expr, toplevel))),
+            Neg(ref expr) => Neg(Box::new(self.duplicate(subst, &**expr, toplevel))),
+            FNeg(ref expr) => FNeg(Box::new(self.duplicate(subst, &**expr, toplevel))),
             Tuple(ref nds, ref ty) => {
                 let new_ty = self.apply_subst(subst, ty);
                 let mut new_nds = Vec::new();
                 for nd in nds.iter() {
-                    new_nds.push(self.duplicate(subst, nd));
+                    new_nds.push(self.duplicate(subst, nd, toplevel));
                 }
 
                 Tuple(new_nds, new_ty)
             }
             Array(ref size, ref expr, ref ty) => {
                 let new_ty = self.apply_subst(subst, ty);
-                let new_size = self.duplicate(subst, &**size);
-                let new_expr = self.duplicate(subst, &**expr);
+                let new_size = self.duplicate(subst, &**size, toplevel);
+                let new_expr = self.duplicate(subst, &**expr, toplevel);
 
                 Array(Box::new(new_size), Box::new(new_expr), new_ty)
             }
             Get(ref array, ref idx, ref ty) => {
                 let new_ty = self.apply_subst(subst, ty);
-                let new_array = self.duplicate(subst, &**array);
-                let new_idx = self.duplicate(subst, &**idx);
+                let new_array = self.duplicate(subst, &**array, toplevel);
+                let new_idx = self.duplicate(subst, &**idx, toplevel);
 
                 Get(Box::new(new_array), Box::new(new_idx), new_ty)
             }
             Put(ref array, ref idx, ref expr, ref ty) => {
                 let new_ty = self.apply_subst(subst, ty);
-                let new_array = self.duplicate(subst, &**array);
-                let new_idx = self.duplicate(subst, &**idx);
-                let new_expr = self.duplicate(subst, &**expr);
+                let new_array = self.duplicate(subst, &**array, toplevel);
+                let new_idx = self.duplicate(subst, &**idx, toplevel);
+                let new_expr = self.duplicate(subst, &**expr, toplevel);
 
                 Put(
                     Box::new(new_array),
@@ -287,9 +308,9 @@ impl Mono2 {
                 ref ty,
             } => {
                 let new_ty = self.apply_subst(subst, ty);
-                let new_lhs = self.duplicate(subst, &**lhs);
+                let new_lhs = self.duplicate(subst, &**lhs, toplevel);
                 let new_op = op.clone();
-                let new_rhs = self.duplicate(subst, &**rhs);
+                let new_rhs = self.duplicate(subst, &**rhs, toplevel);
 
                 Expr {
                     lhs: Box::new(new_lhs),
@@ -305,9 +326,9 @@ impl Mono2 {
                 ref ty,
             } => {
                 let new_ty = self.apply_subst(subst, ty);
-                let new_cond = self.duplicate(subst, &**cond);
-                let new_then_body = self.duplicate(subst, &**then_body);
-                let new_else_body = self.duplicate(subst, &**else_body);
+                let new_cond = self.duplicate(subst, &**cond, toplevel);
+                let new_then_body = self.duplicate(subst, &**then_body, toplevel);
+                let new_else_body = self.duplicate(subst, &**else_body, toplevel);
 
                 IfExpr {
                     cond: Box::new(new_cond),
@@ -326,8 +347,8 @@ impl Mono2 {
                 let (ref id, ref id_ty) = name;
                 let new_name_ty = self.apply_subst(subst, id_ty);
                 let new_name = (self.mangle_name(id, &new_name_ty), new_name_ty);
-                let new_first_expr = self.duplicate(subst, &**first_expr);
-                let new_second_expr = self.duplicate(subst, &**second_expr);
+                let new_first_expr = self.duplicate(subst, &**first_expr, toplevel);
+                let new_second_expr = self.duplicate(subst, &**second_expr, toplevel);
 
                 LetExpr {
                     name: new_name,
@@ -350,8 +371,8 @@ impl Mono2 {
                     let new_name = self.mangle_name(name, &new_ty);
                     new_names.push((new_name, new_ty));
                 }
-                let new_first_expr = self.duplicate(subst, &**first_expr);
-                let new_second_expr = self.duplicate(subst, &**second_expr);
+                let new_first_expr = self.duplicate(subst, &**first_expr, toplevel);
+                let new_second_expr = self.duplicate(subst, &**second_expr, toplevel);
                 let new_tuple_ty = self.apply_subst(subst, tuple_ty);
 
                 LetTupleExpr {
@@ -370,23 +391,28 @@ impl Mono2 {
                 ref ty,
             } => {
                 let (ref id, ref id_ty) = name;
-                let mut new_second_expr = self.duplicate(subst, &**second_expr);
+                let mut new_second_expr = self.duplicate(subst, &**second_expr, toplevel);
                 let mut generated = HashTrieSet::new();
-                for subst in self.renv.get(id).unwrap_or(&vec![]).iter() {
-                    let new_name_ty = self.apply_subst(subst, id_ty);
+                // if toplevel {
+                for var_subst in self.renv.get(id).unwrap_or(&vec![]).iter() {
+                    if self.is_contra_subst(subst, var_subst) {
+                        continue;
+                    }
+                    let subst = self.synthesize_subst(subst, var_subst);
+                    let new_name_ty = self.apply_subst(&subst, id_ty);
                     let new_name = (self.mangle_name(id, &new_name_ty), new_name_ty);
                     if generated.contains(&new_name.0) {
                         continue;
                     }
                     generated = generated.insert(new_name.0.clone());
-                    let new_ty = self.apply_subst(subst, ty);
+                    let new_ty = self.apply_subst(&subst, ty);
                     let mut new_args = Vec::new();
                     for (arg_name, arg_ty) in args.iter() {
-                        let new_arg_ty = self.apply_subst(subst, arg_ty);
+                        let new_arg_ty = self.apply_subst(&subst, arg_ty);
                         let new_arg_name = self.mangle_name(arg_name, &new_arg_ty);
                         new_args.push((new_arg_name, new_arg_ty));
                     }
-                    let new_first_expr = self.duplicate(subst, &**first_expr);
+                    let new_first_expr = self.duplicate(&subst, &**first_expr, false);
                     new_second_expr = LetRecExpr {
                         name: new_name,
                         args: new_args,
@@ -395,8 +421,38 @@ impl Mono2 {
                         ty: new_ty,
                     };
                 }
-
                 new_second_expr
+                // } else {
+                //     println!("id: {}, id_ty: {}", id, id_ty);
+                //     let new_name_ty = self.apply_subst(subst, id_ty);
+                //     println!("type: {}", new_name_ty);
+                //     println!("subst: {}", subst);
+                //     let new_name = (self.mangle_name(id, &new_name_ty), new_name_ty);
+                //     let subst = self.synthesize_subst(
+                //         &subst,
+                //         self.renv
+                //             .get(&new_name.0)
+                //             .expect(format!("name: {}", &new_name.0).as_ref())
+                //             .get(0)
+                //             .unwrap(),
+                //     );
+                //     let new_ty = self.apply_subst(&subst, ty);
+                //     let mut new_args = Vec::new();
+                //     for (arg_name, arg_ty) in args.iter() {
+                //         let new_arg_ty = self.apply_subst(&subst, arg_ty);
+                //         let new_arg_name = self.mangle_name(arg_name, &new_arg_ty);
+                //         new_args.push((new_arg_name, new_arg_ty));
+                //     }
+                //     let new_first_expr = self.duplicate(&subst, &**first_expr, false);
+                //     new_second_expr = LetRecExpr {
+                //         name: new_name,
+                //         args: new_args,
+                //         first_expr: Box::new(new_first_expr),
+                //         second_expr: Box::new(new_second_expr),
+                //         ty: new_ty,
+                //     };
+                //     new_second_expr
+                // }
             }
             App {
                 ref func,
@@ -404,10 +460,10 @@ impl Mono2 {
                 ref func_ty,
                 ref ty,
             } => {
-                let new_func = self.duplicate(subst, func);
+                let new_func = self.duplicate(subst, func, toplevel);
                 let mut new_args = Vec::new();
                 for arg in args.iter() {
-                    new_args.push(self.duplicate(subst, arg));
+                    new_args.push(self.duplicate(subst, arg, toplevel));
                 }
                 let new_func_ty = self.apply_subst(subst, func_ty);
                 let new_ty = self.apply_subst(subst, ty);
@@ -425,7 +481,7 @@ impl Mono2 {
     pub fn monomorphize(&mut self, node: &TypedNode) -> TypedNode {
         let subst = Subst::new();
         self.resolve(Env::new(), &subst, node);
-        self.duplicate(&subst, node)
+        self.duplicate(&subst, node, true)
     }
 }
 
