@@ -1,7 +1,7 @@
 # rvml -- min-caml compiler with let-polymorphism
 
-`rvml` is a min-caml compiler that implements let-polymorphism.
-rvml's polymorphic type inference is implemented in level-based algorithm discovered by Didier Rémy.
+`rvml` is a min-caml compiler with let-polymorphism.
+`rvml`'s polymorphic type inference is implemented in level-based algorithm discovered by Didier Rémy.
 
 ![](img/contest.png)
 
